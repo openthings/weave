@@ -557,11 +557,6 @@ type fastDatapathForwarder struct {
 }
 
 func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectionParams) (mesh.OverlayConnection, error) {
-	if params.SessionKey != nil {
-		// No encryption support in fastdp
-		return nil, fmt.Errorf("encryption not supported")
-	}
-
 	vxlanVportID := fastdp.mainVxlanVportID
 	var remoteAddr *net.UDPAddr
 
