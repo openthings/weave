@@ -93,9 +93,10 @@ func newXfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) *netlink.XfrmState {
 
 func newXfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 	ipMask := []byte{0xff, 0xff, 0xff, 0xff} // /32
+
 	return &netlink.XfrmPolicy{
-		Src:   &net.IPNet{srcIP, ipMask},
-		Dst:   &net.IPNet{dstIP, ipMask},
+		Src:   &net.IPNet{IP: srcIP, Mask: ipMask},
+		Dst:   &net.IPNet{IP: dstIP, Mask: ipMask},
 		Proto: syscall.IPPROTO_UDP,
 		Dir:   netlink.XFRM_DIR_OUT,
 		Tmpls: []netlink.XfrmPolicyTmpl{
