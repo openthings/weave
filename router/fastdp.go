@@ -9,9 +9,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/vishvananda/netlink"
 	"github.com/weaveworks/go-odp/odp"
 	"github.com/weaveworks/mesh"
+
+	"github.com/weaveworks/weave/net/ipsec"
 )
 
 // The virtual bridge accepts packets from ODP vports and the router
@@ -572,6 +575,18 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		vxlanVportID, err = fastdp.getVxlanVportID(remoteAddr.Port)
 		if err != nil {
 			return nil, err
+		}
+	}
+
+	if params.SessionKey != nil {
+		log.Info("setting IPSec for fastdp")
+		err := ipsec.Setup(
+			fastdp.localPeer.ShortID, params.RemotePeer.ShortID,
+			params.LocalAddr.IP, params.RemoteAddr.IP,
+			(*params.SessionKey)[:],
+		)
+		if err != nil {
+			return nil, errors.Wrap(err, "ipsec setup")
 		}
 	}
 
