@@ -1,5 +1,11 @@
 package ipsec
 
+// TODO
+// * Mark packets (mangle OUTPUT)
+// * Implement Teardown
+// * Fixes to vishvananda/netlink
+// * Fixes to kernel
+
 import (
 	"fmt"
 	"net"
@@ -29,7 +35,7 @@ func Reset() error {
 	return nil
 }
 
-func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, sessionKey []byte) error {
+func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, localKey, remoteKey []byte) error {
 	outSPI, err := newSPI(srcPeer, dstPeer)
 	if err != nil {
 		return errors.Wrap(err, "new SPI")
@@ -39,15 +45,22 @@ func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, sessionKey []
 		return errors.Wrap(err, "new SPI")
 	}
 
-	inSA := newXfrmState(dstIP, srcIP, inSPI, sessionKey)
-	if err := netlink.XfrmStateAdd(inSA); err != nil {
-		// TODO(mp) make sure that sessionKey is not logged
-		return errors.Wrap(err, "xfrm state (in) add")
+	// TODO(mp) make sure that keys are not logged
+
+	if inSA, err := newXfrmState(dstIP, srcIP, inSPI, remoteKey); err == nil {
+		if err := netlink.XfrmStateAdd(inSA); err != nil {
+			return errors.Wrap(err, "xfrm state (in) add")
+		}
+	} else {
+		return errors.Wrap(err, "new xfrm state")
 	}
-	// TODO(mp) use a sessionKey per direction
-	outSA := newXfrmState(srcIP, dstIP, outSPI, sessionKey)
-	if err := netlink.XfrmStateAdd(outSA); err != nil {
-		return errors.Wrap(err, "xfrm state (out) add")
+
+	if outSA, err := newXfrmState(srcIP, dstIP, outSPI, localKey); err == nil {
+		if err := netlink.XfrmStateAdd(outSA); err != nil {
+			return errors.Wrap(err, "xfrm state (out) add")
+		}
+	} else {
+		return errors.Wrap(err, "new xfrm state")
 	}
 
 	outPolicy := newXfrmPolicy(srcIP, dstIP, outSPI)
@@ -76,7 +89,11 @@ func newSPI(srcPeer, dstPeer mesh.PeerShortID) (SPI, error) {
 	return spi, nil
 }
 
-func newXfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) *netlink.XfrmState {
+func newXfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, error) {
+	if len(key) != 36 {
+		return nil, fmt.Errorf("key should be 36 bytes long")
+	}
+
 	return &netlink.XfrmState{
 		Src:   srcIP,
 		Dst:   dstIP,
@@ -85,10 +102,10 @@ func newXfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) *netlink.XfrmState {
 		Spi:   int(spi), // TODO(mp) s/int/uint32
 		Aead: &netlink.XfrmStateAlgo{
 			Name:   "rfc4106(gcm(aes))",
-			Key:    key[:20], // TODO(mp) generate 36 octets
+			Key:    key,
 			ICVLen: 128,
 		},
-	}
+	}, nil
 }
 
 func newXfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {

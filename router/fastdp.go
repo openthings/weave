@@ -578,12 +578,13 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		}
 	}
 
-	if params.SessionKey != nil {
+	// TODO(mp) maybe use *[]byte instead
+	if len(params.LocalSAKey) != 0 && len(params.RemoteSAKey) != 0 {
 		log.Info("setting IPSec for fastdp")
 		err := ipsec.Setup(
 			fastdp.localPeer.ShortID, params.RemotePeer.ShortID,
 			params.LocalAddr.IP, params.RemoteAddr.IP,
-			(*params.SessionKey)[:],
+			params.LocalSAKey, params.RemoteSAKey,
 		)
 		if err != nil {
 			return nil, errors.Wrap(err, "ipsec setup")
