@@ -83,6 +83,10 @@ func NewFastDatapath(iface *net.Interface, port int) (*FastDatapath, error) {
 		return nil, err
 	}
 
+	if err := ipsec.Reset(); err != nil {
+		return nil, err
+	}
+
 	fastdp := &FastDatapath{
 		iface:         iface,
 		dpif:          dpif,
@@ -584,6 +588,9 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		err := ipsec.Setup(
 			fastdp.localPeer.ShortID, params.RemotePeer.ShortID,
 			params.LocalAddr.IP, params.RemoteAddr.IP,
+			// TODO(mp) uint16
+			uint16(6784),
+			//uint16(remoteAddr.Port),
 			params.LocalSAKey, params.RemoteSAKey,
 		)
 		if err != nil {
@@ -696,6 +703,8 @@ func (fwd *fastDatapathForwarder) handleError(err error) {
 	case fwd.errorChan <- err:
 	default:
 	}
+
+	// TODO(mp) teardown IPSec
 
 	// stop the heartbeat goroutine
 	if !fwd.stopped {
