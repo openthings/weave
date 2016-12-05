@@ -1,10 +1,22 @@
 package ipsec
 
 // TODO
-// * NAT traversal (ESP tunnel)
-// * Implement Teardown
-// * Fixes to vishvananda/netlink
-// * Fixes to kernel
+// * Remove fastdp flows upon `weave reset`.
+// * Remove ipsec upon `weave reset`.
+// * Do ipsec.Reset() if crypto is enabled.
+// * Selective reset of XFRM policies/states.
+// * Tests
+// * Design documentation.
+// * Test NAT-T in tunnel mode.
+// * Check how k8s does marking to prevent possible collisions.
+// * Do not store {local,reset}SAKey in mesh connection state.
+// * Implement Teardown and call it when the connection is closed.
+//
+// * Various XFRM related improvements to vishvananda/netlink.
+// * Patch the kernel.
+//
+// * Overhead for having additional chain.
+// * transport vs tunnel mode benchmarks.
 
 import (
 	"encoding/binary"
@@ -12,7 +24,6 @@ import (
 	"fmt"
 	"net"
 	"strconv"
-	"strings"
 	"syscall"
 
 	"github.com/coreos/go-iptables/iptables"
@@ -24,9 +35,13 @@ import (
 
 type SPI uint32
 
-const chainWeaveIPSec = "WEAVE-IPSEC"
-const chainWeaveIPSecEgress = "WEAVE-IPSEC-EGRESS"
-const skbMark = uint32(0x77766e74)
+const (
+	table     = "mangle"
+	markChain = "WEAVE-IPSEC-MARK"
+	mainChain = "WEAVE-IPSEC"
+
+	skbMark = uint32(0x77766e74)
+)
 
 // API
 
@@ -82,28 +97,14 @@ func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort uint1
 		return errors.Wrap(err, "xfrm policy add")
 	}
 
-	if err := ensureIPTablesRule(srcIP, dstIP, dstPort); err != nil {
+	if err := installMarkRule(srcIP, dstIP, dstPort); err != nil {
 		return errors.Wrap(err, "ensure iptables")
 	}
 
 	return nil
 }
 
-// Helpers
-
-// | 0.. SRC_PEER | 0.. DST_PEER |
-func newSPI(srcPeer, dstPeer mesh.PeerShortID) (SPI, error) {
-	var spi SPI
-
-	if mesh.PeerShortIDBits > 16 { // should not happen
-		return 0, fmt.Errorf("PeerShortID too long")
-	}
-
-	// TODO(mp) Fill the free space (8 bits) with RND
-	spi = SPI(uint32(srcPeer)<<16 | uint32(dstPeer))
-
-	return spi, nil
-}
+// xfrm
 
 func newXfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, error) {
 	if len(key) != 36 {
@@ -147,19 +148,21 @@ func newXfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 	}
 }
 
-func ensureIPTablesRule(srcIP, dstIP net.IP, dstPort uint16) error {
+// iptables
+
+func installMarkRule(srcIP, dstIP net.IP, dstPort uint16) error {
 	ipt, err := iptables.New()
 	if err != nil {
-		return errors.Wrap(err, "iptables.New")
+		return errors.Wrap(err, "iptables.New()")
 	}
 
-	table := "mangle"
-	chain := chainWeaveIPSecEgress
-	rules := []string{"-j", chainWeaveIPSec, "-p", "udp", "-s", srcIP.String(),
-		"-d", dstIP.String(), "--dport", strconv.FormatUint(uint64(dstPort), 10)}
-
-	if err := ipt.Append(table, chain, rules...); err != nil {
-		return errors.Wrap(err, "ipt.Append")
+	rulespec := []string{
+		"-s", srcIP.String(), "-d", dstIP.String(),
+		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
+		"-j", markChain,
+	}
+	if err := ipt.AppendUnique(table, mainChain, rulespec...); err != nil {
+		return errors.Wrap(err, "ipt.AppendUnique()")
 	}
 
 	return nil
@@ -168,48 +171,43 @@ func ensureIPTablesRule(srcIP, dstIP net.IP, dstPort uint16) error {
 func resetIPTables() error {
 	ipt, err := iptables.New()
 	if err != nil {
-		return errors.Wrap(err, "iptables.New")
+		return errors.Wrap(err, "iptables.New()")
 	}
 
-	ipt.Delete("mangle", "OUTPUT", "-j", "WEAVE-IPSEC-EGRESS")
-
-	if err := resetChain(ipt, "mangle", chainWeaveIPSecEgress); err != nil {
-		return errors.Wrap(err, "resetChain")
-	}
-	if err := resetChain(ipt, "mangle", chainWeaveIPSec); err != nil {
-		return errors.Wrap(err, "resetChain")
+	if err := ipt.ClearChain(table, mainChain); err != nil {
+		return errors.Wrap(err, "ipt.ClearChain("+mainChain+")")
 	}
 
-	// TODO(mp) create if does not exist
-	if err := ipt.Append("mangle", "OUTPUT", "-j", chainWeaveIPSecEgress); err != nil {
-		return errors.Wrap(err, "foobar")
+	if err := ipt.ClearChain(table, markChain); err != nil {
+		return errors.Wrap(err, "ipt.ClearChain("+markChain+")")
+	}
+
+	if err := ipt.AppendUnique(table, "OUTPUT", "-j", mainChain); err != nil {
+		return errors.Wrap(err, "ipt.AppendUnique("+mainChain+")")
 	}
 
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, skbMark)
-	if err := ipt.Append("mangle", chainWeaveIPSec, "-j", "MARK",
-		"--set-mark", "0x"+hex.EncodeToString(b)); err != nil {
-		return errors.Wrap(err, "append "+chainWeaveIPSec)
+	rulespec := []string{"-j", "MARK", "--set-mark", "0x" + hex.EncodeToString(b)}
+	if err := ipt.Append(table, markChain, rulespec...); err != nil {
+		return errors.Wrap(err, "ipt.AppendUnique("+markChain+")")
 	}
 
 	return nil
 }
 
-func resetChain(ipt *iptables.IPTables, table, chain string) error {
-	if err := ipt.ClearChain(table, chain); err != nil {
-		return errors.Wrap(err, "ipt.ClearChain")
+// helpers
+
+// | 0.. SRC_PEER | 0.. DST_PEER |
+func newSPI(srcPeer, dstPeer mesh.PeerShortID) (SPI, error) {
+	var spi SPI
+
+	if mesh.PeerShortIDBits > 16 { // should not happen
+		return 0, fmt.Errorf("PeerShortID too long")
 	}
 
-	if err := ipt.DeleteChain(table, chain); err != nil {
-		// TODO(mp) "thisisfine" or fix coreos/go-iptables
-		if !strings.Contains(err.Error(), "No chain/target/match by that name") {
-			return errors.Wrap(err, "ipt.DeleteChain")
-		}
-	}
+	// TODO(mp) Fill the free space (8 bits) with RND
+	spi = SPI(uint32(srcPeer)<<16 | uint32(dstPeer))
 
-	if err := ipt.NewChain(table, chain); err != nil {
-		return errors.Wrap(err, "new chain "+chain)
-	}
-
-	return nil
+	return spi, nil
 }
