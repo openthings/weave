@@ -1,15 +1,16 @@
 package ipsec
 
 // TODO
+// * Handle the case when params.RemoteAddr is not present.
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
+// * Handle EEXIST for XFRM policies / SAs.
 
 // * Tests.
 // * Design documentation.
 // * Test NAT-T in tunnel mode (fragmentation might be an issue).
 // * Check how k8s does marking to prevent possible collisions.
 // * Do not store {local,reset}SAKey in mesh connection state.
-// * Implement Teardown and call it when the connection is closed.
 //
 // * Cleanup log messages.
 // * Cleanup errors.Wrap.
@@ -94,49 +95,79 @@ func Reset() error {
 	return nil
 }
 
-func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort uint16, localKey, remoteKey []byte) error {
+// A Setup sets up IPSec for a tunnel between srcIP and dstIP.
+func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort int, localKey, remoteKey []byte) (SPI, error) {
 	outSPI, err := newSPI(srcPeer, dstPeer)
 	if err != nil {
-		return errors.Wrap(err, "new SPI")
+		return 0, errors.Wrap(err, "new SPI")
 	}
 	inSPI, err := newSPI(dstPeer, srcPeer)
 	if err != nil {
-		return errors.Wrap(err, "new SPI")
+		return 0, errors.Wrap(err, "new SPI")
 	}
 
 	// TODO(mp) make sure that keys are not logged
 
-	if inSA, err := newXfrmState(dstIP, srcIP, inSPI, remoteKey); err == nil {
+	if inSA, err := xfrmState(dstIP, srcIP, inSPI, remoteKey); err == nil {
 		if err := netlink.XfrmStateAdd(inSA); err != nil {
-			return errors.Wrap(err, "xfrm state (in) add")
+			return 0, errors.Wrap(err, "xfrm state (in) add")
 		}
 	} else {
-		return errors.Wrap(err, "new xfrm state")
+		return 0, errors.Wrap(err, "new xfrm state")
 	}
 
-	if outSA, err := newXfrmState(srcIP, dstIP, outSPI, localKey); err == nil {
+	if outSA, err := xfrmState(srcIP, dstIP, outSPI, localKey); err == nil {
 		if err := netlink.XfrmStateAdd(outSA); err != nil {
-			return errors.Wrap(err, "xfrm state (out) add")
+			return 0, errors.Wrap(err, "xfrm state (out) add")
 		}
 	} else {
-		return errors.Wrap(err, "new xfrm state")
+		return 0, errors.Wrap(err, "new xfrm state")
 	}
 
-	outPolicy := newXfrmPolicy(srcIP, dstIP, outSPI)
+	outPolicy := xfrmPolicy(srcIP, dstIP, outSPI)
 	if err := netlink.XfrmPolicyAdd(outPolicy); err != nil {
-		return errors.Wrap(err, "xfrm policy add")
+		return 0, errors.Wrap(err, "xfrm policy add")
 	}
 
 	if err := installMarkRule(srcIP, dstIP, dstPort); err != nil {
-		return errors.Wrap(err, "ensure iptables")
+		return 0, errors.Wrap(err, "ensure iptables")
 	}
+
+	return outSPI, nil
+}
+
+func Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
+	if err := netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, outSPI)); err != nil {
+		return errors.Wrap(err, "netlink.XfrmPolicyDel")
+	}
+
+	inSA := &netlink.XfrmState{
+		Src:   srcIP,
+		Dst:   dstIP,
+		Proto: netlink.XFRM_PROTO_ESP,
+		Spi:   int(reverseSPI(outSPI)),
+	}
+	outSA := &netlink.XfrmState{
+		Src:   srcIP,
+		Dst:   dstIP,
+		Proto: netlink.XFRM_PROTO_ESP,
+		Spi:   int(outSPI),
+	}
+	if err := netlink.XfrmStateDel(inSA); err != nil {
+		return errors.Wrap(err, "netlink.XfrmStateDel")
+	}
+	if err := netlink.XfrmStateDel(outSA); err != nil {
+		return errors.Wrap(err, "netlink.XfrmStateDel")
+	}
+
+	// TODO(mp) iptables
 
 	return nil
 }
 
 // xfrm
 
-func newXfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, error) {
+func xfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, error) {
 	if len(key) != 36 {
 		return nil, fmt.Errorf("key should be 36 bytes long")
 	}
@@ -155,7 +186,7 @@ func newXfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState,
 	}, nil
 }
 
-func newXfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
+func xfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 	ipMask := []byte{0xff, 0xff, 0xff, 0xff} // /32
 
 	return &netlink.XfrmPolicy{
@@ -180,7 +211,7 @@ func newXfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 
 // iptables
 
-func installMarkRule(srcIP, dstIP net.IP, dstPort uint16) error {
+func installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 	ipt, err := iptables.New()
 	if err != nil {
 		return errors.Wrap(err, "iptables.New()")

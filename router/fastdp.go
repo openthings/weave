@@ -554,6 +554,8 @@ type fastDatapathForwarder struct {
 	sendControlMsg func(byte, []byte) error
 	connUID        uint64
 	vxlanVportID   odp.VportID
+	isEncrypted    bool
+	spi            ipsec.SPI
 
 	lock              sync.RWMutex
 	confirmed         bool
@@ -572,7 +574,11 @@ type fastDatapathForwarder struct {
 func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectionParams) (mesh.OverlayConnection, error) {
 	vxlanVportID := fastdp.mainVxlanVportID
 	vxlanUDPPort := fastdp.mainVxlanUDPPort
-	var remoteAddr *net.UDPAddr
+	var (
+		remoteAddr  *net.UDPAddr
+		isEncrypted bool
+		spi         ipsec.SPI
+	)
 
 	if params.Outbound {
 		remoteAddr = makeUDPAddr(params.RemoteAddr)
@@ -590,22 +596,25 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		}
 	}
 
+	localIP, err := ipv4Bytes(params.LocalAddr.IP)
+	if err != nil {
+		return nil, err
+	}
+
 	if fastdp.enableEncryption && params.LocalSAKey != nil && params.RemoteSAKey != nil {
+		var err error
 		log.Info("setting up IPSec between blah")
-		err := ipsec.Setup(
+		spi, err = ipsec.Setup(
 			fastdp.localPeer.ShortID, params.RemotePeer.ShortID,
+			// TODO(mp) ouch, params.RemoteAddr might be not present :(
 			params.LocalAddr.IP, params.RemoteAddr.IP,
-			uint16(vxlanUDPPort),
+			vxlanUDPPort,
 			params.LocalSAKey, params.RemoteSAKey,
 		)
 		if err != nil {
 			return nil, errors.Wrap(err, "ipsec setup")
 		}
-	}
-
-	localIP, err := ipv4Bytes(params.LocalAddr.IP)
-	if err != nil {
-		return nil, err
+		isEncrypted = true
 	}
 
 	fwd := &fastDatapathForwarder{
@@ -615,6 +624,8 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		sendControlMsg: params.SendControlMessage,
 		connUID:        params.ConnUID,
 		vxlanVportID:   vxlanVportID,
+		isEncrypted:    isEncrypted,
+		spi:            spi,
 
 		remoteAddr:        remoteAddr,
 		heartbeatInterval: FastHeartbeat,
@@ -624,7 +635,7 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		errorChan:       make(chan error, 1),
 	}
 
-	return fwd, err
+	return fwd, nil
 }
 
 func ipv4Bytes(ip net.IP) (res [4]byte, err error) {
@@ -863,6 +874,13 @@ func (fwd *fastDatapathForwarder) Stop() {
 	fwd.lock.Lock()
 	defer fwd.lock.Unlock()
 	fwd.sendControlMsg = func(byte, []byte) error { return nil }
+
+	if fwd.isEncrypted {
+		err := ipsec.Teardown(net.IP(fwd.localIP[:]), fwd.remoteAddr.IP, fwd.remoteAddr.Port, fwd.spi)
+		if err != nil {
+			log.Error("unable to teardown IPSec between blah: %s", err)
+		}
+	}
 
 	// stop the heartbeat goroutine
 	if !fwd.stopped {
