@@ -42,6 +42,7 @@ type FastDatapath struct {
 	localPeer        *mesh.Peer
 	peers            *mesh.Peers
 	overlayConsumer  OverlayConsumer
+	enableEncryption bool
 
 	// Bridge state: How to send to the given bridge port
 	sendToPort map[bridgePortID]bridgeSender
@@ -66,7 +67,7 @@ type FastDatapath struct {
 	forwarders map[mesh.PeerName]*fastDatapathForwarder
 }
 
-func NewFastDatapath(iface *net.Interface, port int) (*FastDatapath, error) {
+func NewFastDatapath(iface *net.Interface, port int, enableEncryption bool) (*FastDatapath, error) {
 	dpif, err := odp.NewDpif()
 	if err != nil {
 		return nil, err
@@ -84,22 +85,24 @@ func NewFastDatapath(iface *net.Interface, port int) (*FastDatapath, error) {
 		return nil, err
 	}
 
-	// TODO(mp) if crypto:
-	if err := ipsec.Reset(); err != nil {
-		return nil, err
+	if enableEncryption {
+		if err := ipsec.Reset(); err != nil {
+			return nil, err
+		}
 	}
 
 	fastdp := &FastDatapath{
-		iface:         iface,
-		dpif:          dpif,
-		dp:            dp,
-		missHandlers:  make(map[odp.VportID]missHandler),
-		sendToPort:    nil,
-		sendToMAC:     make(map[MAC]bridgeSender),
-		seenMACs:      make(map[MAC]struct{}),
-		vxlanUDPPorts: make(map[int]odp.VportID),
-		vxlanVportIDs: make(map[odp.VportID]struct{}),
-		forwarders:    make(map[mesh.PeerName]*fastDatapathForwarder),
+		iface:            iface,
+		dpif:             dpif,
+		dp:               dp,
+		missHandlers:     make(map[odp.VportID]missHandler),
+		enableEncryption: enableEncryption,
+		sendToPort:       nil,
+		sendToMAC:        make(map[MAC]bridgeSender),
+		seenMACs:         make(map[MAC]struct{}),
+		vxlanUDPPorts:    make(map[int]odp.VportID),
+		vxlanVportIDs:    make(map[odp.VportID]struct{}),
+		forwarders:       make(map[mesh.PeerName]*fastDatapathForwarder),
 	}
 
 	// This delete happens asynchronously in the kernel, meaning that
@@ -587,9 +590,8 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		}
 	}
 
-	// TODO(mp) maybe use *[]byte instead
-	if len(params.LocalSAKey) != 0 && len(params.RemoteSAKey) != 0 {
-		log.Info("setting IPSec for fastdp")
+	if fastdp.enableEncryption && params.LocalSAKey != nil && params.RemoteSAKey != nil {
+		log.Info("setting up IPSec between blah")
 		err := ipsec.Setup(
 			fastdp.localPeer.ShortID, params.RemotePeer.ShortID,
 			params.LocalAddr.IP, params.RemoteAddr.IP,

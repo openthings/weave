@@ -4,13 +4,17 @@ package ipsec
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
 
-// * Do ipsec.Reset() if crypto is enabled.
 // * Tests.
 // * Design documentation.
 // * Test NAT-T in tunnel mode (fragmentation might be an issue).
 // * Check how k8s does marking to prevent possible collisions.
 // * Do not store {local,reset}SAKey in mesh connection state.
 // * Implement Teardown and call it when the connection is closed.
+//
+// * Cleanup log messages.
+// * Cleanup errors.Wrap.
+//
+// * type IPSec struct { ipt *iptables.IPTables }
 //
 // * Various XFRM related improvements to vishvananda/netlink.
 // * Patch the kernel.
