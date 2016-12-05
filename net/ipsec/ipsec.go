@@ -3,11 +3,11 @@ package ipsec
 // TODO
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
+
 // * Do ipsec.Reset() if crypto is enabled.
-// * Selective reset of XFRM policies/states.
-// * Tests
+// * Tests.
 // * Design documentation.
-// * Test NAT-T in tunnel mode.
+// * Test NAT-T in tunnel mode (fragmentation might be an issue).
 // * Check how k8s does marking to prevent possible collisions.
 // * Do not store {local,reset}SAKey in mesh connection state.
 // * Implement Teardown and call it when the connection is closed.
@@ -45,12 +45,38 @@ const (
 
 // API
 
+// A Reset flushes relevant XFRM polices / SAs and resets relevant iptables
+// rules.
 func Reset() error {
-	// TODO(mp) reset based on marker
-	// TODO(mp) Select relevant fields
+	spis := make(map[SPI]struct{})
 
-	if err := netlink.XfrmPolicyFlush(); err != nil {
-		return errors.Wrap(err, "xfrm policy flush")
+	policies, err := netlink.XfrmPolicyList(syscall.AF_INET)
+	if err != nil {
+		return errors.Wrap(err, "netlink.XfrmPolicyList")
+	}
+	for _, p := range policies {
+		if p.Mark != nil && p.Mark.Value == skbMark {
+			// TODO(mp) this might fail, maybe ignore if tmpls is nil?
+			spi := SPI(p.Tmpls[0].Spi)
+			spis[spi] = struct{}{}
+			spis[reverseSPI(spi)] = struct{}{}
+
+			if err := netlink.XfrmPolicyDel(&p); err != nil {
+				return errors.Wrap(err, "netlink.XfrmPolicyDel")
+			}
+		}
+	}
+
+	states, err := netlink.XfrmStateList(syscall.AF_INET)
+	if err != nil {
+		return errors.Wrap(err, "netlink.XfrmPolicyList")
+	}
+	for _, s := range states {
+		if _, ok := spis[SPI(s.Spi)]; ok {
+			if err := netlink.XfrmStateDel(&s); err != nil {
+				return errors.Wrap(err, "netlink.XfrmStateDel")
+			}
+		}
 	}
 
 	if err := netlink.XfrmStateFlush(netlink.XFRM_PROTO_ESP); err != nil {
@@ -210,4 +236,8 @@ func newSPI(srcPeer, dstPeer mesh.PeerShortID) (SPI, error) {
 	spi = SPI(uint32(srcPeer)<<16 | uint32(dstPeer))
 
 	return spi, nil
+}
+
+func reverseSPI(spi SPI) SPI {
+	return SPI(uint32(spi)>>16 | uint32(spi)<<16)
 }
