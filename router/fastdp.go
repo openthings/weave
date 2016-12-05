@@ -83,6 +83,7 @@ func NewFastDatapath(iface *net.Interface, port int) (*FastDatapath, error) {
 		return nil, err
 	}
 
+	// TODO(mp) if crypto:
 	if err := ipsec.Reset(); err != nil {
 		return nil, err
 	}

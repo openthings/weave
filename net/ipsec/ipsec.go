@@ -1,7 +1,7 @@
 package ipsec
 
 // TODO
-// * Mark packets (mangle OUTPUT)
+// * NAT traversal (ESP tunnel)
 // * Implement Teardown
 // * Fixes to vishvananda/netlink
 // * Fixes to kernel
