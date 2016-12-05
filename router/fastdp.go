@@ -575,13 +575,14 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 	vxlanVportID := fastdp.mainVxlanVportID
 	vxlanUDPPort := fastdp.mainVxlanUDPPort
 	var (
-		remoteAddr  *net.UDPAddr
 		isEncrypted bool
 		spi         ipsec.SPI
 	)
 
+	fmt.Println("!!!!!!!!! >>>", params.RemoteAddr)
+
+	remoteAddr := makeUDPAddr(params.RemoteAddr)
 	if params.Outbound {
-		remoteAddr = makeUDPAddr(params.RemoteAddr)
 		// The provided address contains the main weave port
 		// number to connect to.  We need to derive the vxlan
 		// port number from that.
@@ -594,6 +595,9 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		// TODO(mp) double check whether it's safe to assume the IP
+		remoteAddr.Port = vxlanUDPPort
 	}
 
 	localIP, err := ipv4Bytes(params.LocalAddr.IP)
