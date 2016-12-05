@@ -31,6 +31,7 @@ const skbMark = uint32(0x77766e74)
 // API
 
 func Reset() error {
+	// TODO(mp) reset based on marker
 	// TODO(mp) Select relevant fields
 
 	if err := netlink.XfrmPolicyFlush(); err != nil {

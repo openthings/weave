@@ -56,6 +56,7 @@ type FastDatapath struct {
 	vxlanUDPPorts    map[int]odp.VportID
 	vxlanVportIDs    map[odp.VportID]struct{}
 	mainVxlanVportID odp.VportID
+	mainVxlanUDPPort int
 
 	// A singleton pool for the occasions when we need to decode
 	// the packet.
@@ -121,7 +122,8 @@ func NewFastDatapath(iface *net.Interface, port int) (*FastDatapath, error) {
 	// numbers to be independent, but working out how to specify
 	// them on the connecting side.  So we can wait to find out if
 	// anyone wants that.
-	fastdp.mainVxlanVportID, err = fastdp.getVxlanVportIDHarder(port+1, 5, time.Millisecond*10)
+	fastdp.mainVxlanUDPPort = port + 1
+	fastdp.mainVxlanVportID, err = fastdp.getVxlanVportIDHarder(fastdp.mainVxlanUDPPort, 5, time.Millisecond*10)
 	if err != nil {
 		return nil, err
 	}
@@ -566,6 +568,7 @@ type fastDatapathForwarder struct {
 
 func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectionParams) (mesh.OverlayConnection, error) {
 	vxlanVportID := fastdp.mainVxlanVportID
+	vxlanUDPPort := fastdp.mainVxlanUDPPort
 	var remoteAddr *net.UDPAddr
 
 	if params.Outbound {
@@ -577,7 +580,8 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		vxlanRemoteAddr.Port++
 		remoteAddr = &vxlanRemoteAddr
 		var err error
-		vxlanVportID, err = fastdp.getVxlanVportID(remoteAddr.Port)
+		vxlanUDPPort = remoteAddr.Port
+		vxlanVportID, err = fastdp.getVxlanVportID(vxlanUDPPort)
 		if err != nil {
 			return nil, err
 		}
@@ -589,9 +593,7 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		err := ipsec.Setup(
 			fastdp.localPeer.ShortID, params.RemotePeer.ShortID,
 			params.LocalAddr.IP, params.RemoteAddr.IP,
-			// TODO(mp) uint16
-			uint16(6784),
-			//uint16(remoteAddr.Port),
+			uint16(vxlanUDPPort),
 			params.LocalSAKey, params.RemoteSAKey,
 		)
 		if err != nil {
