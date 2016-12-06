@@ -881,6 +881,7 @@ func (fwd *fastDatapathForwarder) Stop() {
 
 	if fwd.isEncrypted {
 		localIP := net.IP(fwd.localIP[:])
+		log.Info("ipsec Teardown", localIP, fwd.remoteAddr.IP)
 		err := ipsec.Teardown(localIP, fwd.remoteAddr.IP, fwd.remoteAddr.Port, fwd.spi)
 		if err != nil {
 			log.Errorf("unable to teardown IPSec between %s and %s: %s", localIP, fwd.remoteAddr.IP, err)

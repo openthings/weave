@@ -57,7 +57,7 @@ func Reset() error {
 
 	policies, err := netlink.XfrmPolicyList(syscall.AF_INET)
 	if err != nil {
-		return errors.Wrap(err, "netlink.XfrmPolicyList")
+		return errors.Wrap(err, "xfrm policy list")
 	}
 	for _, p := range policies {
 		if p.Mark != nil && p.Mark.Value == skbMark {
@@ -67,25 +67,21 @@ func Reset() error {
 			spis[reverseSPI(spi)] = struct{}{}
 
 			if err := netlink.XfrmPolicyDel(&p); err != nil {
-				return errors.Wrap(err, "netlink.XfrmPolicyDel")
+				return errors.Wrap(err, fmt.Sprintf("xfrm policy del (%s, %s, 0x%x)", p.Src, p.Dst, spi))
 			}
 		}
 	}
 
 	states, err := netlink.XfrmStateList(syscall.AF_INET)
 	if err != nil {
-		return errors.Wrap(err, "netlink.XfrmPolicyList")
+		return errors.Wrap(err, "xfrm state list")
 	}
 	for _, s := range states {
 		if _, ok := spis[SPI(s.Spi)]; ok {
 			if err := netlink.XfrmStateDel(&s); err != nil {
-				return errors.Wrap(err, "netlink.XfrmStateDel")
+				return errors.Wrap(err, fmt.Sprintf("xfrm state list (%s, %s, 0x%x)", s.Src, s.Dst, s.Spi))
 			}
 		}
-	}
-
-	if err := netlink.XfrmStateFlush(netlink.XFRM_PROTO_ESP); err != nil {
-		return errors.Wrap(err, "xfrm state flush")
 	}
 
 	if err := resetIPTables(); err != nil {
@@ -99,38 +95,44 @@ func Reset() error {
 func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort int, localKey, remoteKey []byte) (SPI, error) {
 	outSPI, err := newSPI(srcPeer, dstPeer)
 	if err != nil {
-		return 0, errors.Wrap(err, "new SPI")
+		return 0,
+			errors.Wrap(err, fmt.Sprintf("derive SPI (%s, %s)", srcPeer, dstPeer))
 	}
 	inSPI, err := newSPI(dstPeer, srcPeer)
 	if err != nil {
-		return 0, errors.Wrap(err, "new SPI")
+		return 0,
+			errors.Wrap(err, fmt.Sprintf("derive SPI (%s, %s)", dstPeer, srcPeer))
 	}
 
 	// TODO(mp) make sure that keys are not logged
 
 	if inSA, err := xfrmState(dstIP, srcIP, inSPI, remoteKey); err == nil {
 		if err := netlink.XfrmStateAdd(inSA); err != nil {
-			return 0, errors.Wrap(err, "xfrm state (in) add")
+			return 0,
+				errors.Wrap(err, fmt.Sprintf("xfrm state add (in, %s, %s, 0x%x)", inSA.Src, inSA.Dst, inSA.Spi))
 		}
 	} else {
-		return 0, errors.Wrap(err, "new xfrm state")
+		return 0, errors.Wrap(err, "new xfrm state (in)")
 	}
 
 	if outSA, err := xfrmState(srcIP, dstIP, outSPI, localKey); err == nil {
 		if err := netlink.XfrmStateAdd(outSA); err != nil {
-			return 0, errors.Wrap(err, "xfrm state (out) add")
+			return 0,
+				errors.Wrap(err, fmt.Sprintf("xfrm state add (out, %s, %s, 0x%x)", outSA.Src, outSA.Dst, outSA.Spi))
 		}
 	} else {
-		return 0, errors.Wrap(err, "new xfrm state")
+		return 0, errors.Wrap(err, "new xfrm state (out)")
 	}
 
 	outPolicy := xfrmPolicy(srcIP, dstIP, outSPI)
 	if err := netlink.XfrmPolicyAdd(outPolicy); err != nil {
-		return 0, errors.Wrap(err, "xfrm policy add")
+		return 0,
+			errors.Wrap(err, fmt.Sprintf("xfrm policy add (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
 	}
 
 	if err := installMarkRule(srcIP, dstIP, dstPort); err != nil {
-		return 0, errors.Wrap(err, "ensure iptables")
+		return 0,
+			errors.Wrap(err, fmt.Sprintf("install mark rule (%s, %s, 0x%x)", srcIP, dstIP, dstPort))
 	}
 
 	return outSPI, nil
@@ -222,7 +224,7 @@ func xfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 func installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 	ipt, err := iptables.New()
 	if err != nil {
-		return errors.Wrap(err, "iptables.New()")
+		return errors.Wrap(err, "iptables new")
 	}
 
 	rulespec := []string{
@@ -231,7 +233,7 @@ func installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 		"-j", markChain,
 	}
 	if err := ipt.AppendUnique(table, mainChain, rulespec...); err != nil {
-		return errors.Wrap(err, "ipt.AppendUnique()")
+		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, mainChain, rulespec))
 	}
 
 	return nil
@@ -241,7 +243,7 @@ func installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 func removeMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 	ipt, err := iptables.New()
 	if err != nil {
-		return errors.Wrap(err, "iptables.New()")
+		return errors.Wrap(err, "iptables new")
 	}
 
 	rulespec := []string{
@@ -250,7 +252,7 @@ func removeMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 		"-j", markChain,
 	}
 	if err := ipt.Delete(table, mainChain, rulespec...); err != nil {
-		return errors.Wrap(err, "ipt.AppendUnique()")
+		return errors.Wrap(err, fmt.Sprintf("iptables delete (%s, %s, %s)", table, mainChain, rulespec))
 	}
 
 	return nil
@@ -259,26 +261,26 @@ func removeMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 func resetIPTables() error {
 	ipt, err := iptables.New()
 	if err != nil {
-		return errors.Wrap(err, "iptables.New()")
+		return errors.Wrap(err, "iptables new")
 	}
 
 	if err := ipt.ClearChain(table, mainChain); err != nil {
-		return errors.Wrap(err, "ipt.ClearChain("+mainChain+")")
+		return errors.Wrap(err, fmt.Sprintf("iptables clear (%s, %s)", table, mainChain))
 	}
 
 	if err := ipt.ClearChain(table, markChain); err != nil {
-		return errors.Wrap(err, "ipt.ClearChain("+markChain+")")
+		return errors.Wrap(err, fmt.Sprintf("iptables clear (%s, %s)", table, markChain))
 	}
 
 	if err := ipt.AppendUnique(table, "OUTPUT", "-j", mainChain); err != nil {
-		return errors.Wrap(err, "ipt.AppendUnique("+mainChain+")")
+		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s)", table, "OUTPUT"))
 	}
 
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, skbMark)
 	rulespec := []string{"-j", "MARK", "--set-mark", "0x" + hex.EncodeToString(b)}
 	if err := ipt.Append(table, markChain, rulespec...); err != nil {
-		return errors.Wrap(err, "ipt.AppendUnique("+markChain+")")
+		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, markChain, rulespec))
 	}
 
 	return nil
