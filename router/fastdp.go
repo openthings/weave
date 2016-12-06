@@ -607,10 +607,10 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 
 	if fastdp.enableEncryption && params.LocalSAKey != nil && params.RemoteSAKey != nil {
 		var err error
-		log.Info("setting up IPSec between blah")
+		log.Info("setting up IPSec between ", params.LocalAddr.IP, " and ", params.RemoteAddr.IP)
 		spi, err = ipsec.Setup(
 			fastdp.localPeer.ShortID, params.RemotePeer.ShortID,
-			// TODO(mp) ouch, params.RemoteAddr might be not present :(
+			// TODO(mp) consistency (remoteAddr)
 			params.LocalAddr.IP, params.RemoteAddr.IP,
 			vxlanUDPPort,
 			params.LocalSAKey, params.RemoteSAKey,
@@ -880,9 +880,10 @@ func (fwd *fastDatapathForwarder) Stop() {
 	fwd.sendControlMsg = func(byte, []byte) error { return nil }
 
 	if fwd.isEncrypted {
-		err := ipsec.Teardown(net.IP(fwd.localIP[:]), fwd.remoteAddr.IP, fwd.remoteAddr.Port, fwd.spi)
+		localIP := net.IP(fwd.localIP[:])
+		err := ipsec.Teardown(localIP, fwd.remoteAddr.IP, fwd.remoteAddr.Port, fwd.spi)
 		if err != nil {
-			log.Error("unable to teardown IPSec between blah: %s", err)
+			log.Errorf("unable to teardown IPSec between %s and %s: %s", localIP, fwd.remoteAddr.IP, err)
 		}
 	}
 

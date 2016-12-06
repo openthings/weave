@@ -4,7 +4,7 @@ package ipsec
 // * Handle the case when params.RemoteAddr is not present.
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
-// * Handle EEXIST for XFRM policies / SAs.
+// * Handle EEXIST for XFRM policies / SAs (best-effort?)
 
 // * Tests.
 // * Design documentation.
@@ -140,38 +140,34 @@ func Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
 	var err error
 
 	if err = netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, outSPI)); err != nil {
-		return errors.Wrap(err, "netlink.XfrmPolicyDel")
+		return errors.Wrap(err,
+			fmt.Sprintf("xfrm policy del (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
 	}
 
 	inSA := &netlink.XfrmState{
 		Src:   srcIP,
 		Dst:   dstIP,
 		Proto: netlink.XFRM_PROTO_ESP,
-		Spi:   int(reverseSPI(outSPI)),
-	}
-	outSA := &netlink.XfrmState{
-		Src:   srcIP,
-		Dst:   dstIP,
-		Proto: netlink.XFRM_PROTO_ESP,
 		Spi:   int(outSPI),
 	}
-	inSA, err = netlink.XfrmStateGet(inSA)
-	if err != nil {
-		return errors.Wrap(err, "netlink.XfrmStateGet")
-	}
-	outSA, err = netlink.XfrmStateGet(outSA)
-	if err != nil {
-		return errors.Wrap(err, "netlink.XfrmStateGet")
+	outSA := &netlink.XfrmState{
+		Src:   dstIP,
+		Dst:   srcIP,
+		Proto: netlink.XFRM_PROTO_ESP,
+		Spi:   int(reverseSPI(outSPI)),
 	}
 	if err = netlink.XfrmStateDel(inSA); err != nil {
-		return errors.Wrap(err, "netlink.XfrmStateDel")
+		return errors.Wrap(err,
+			fmt.Sprintf("xfrm state del (in, %s, %s, 0x%x)", inSA.Src, inSA.Dst, inSA.Spi))
 	}
 	if err = netlink.XfrmStateDel(outSA); err != nil {
-		return errors.Wrap(err, "netlink.XfrmStateDel")
+		return errors.Wrap(err,
+			fmt.Sprintf("xfrm state del (out, %s, %s, 0x%x)", outSA.Src, outSA.Dst, outSA.Spi))
 	}
 
 	if err = removeMarkRule(srcIP, dstIP, dstPort); err != nil {
-		return errors.Wrap(err, "removeMarkRule")
+		return errors.Wrap(err,
+			fmt.Sprintf("remove mark rule (%s, %s, %s)", srcIP, dstIP, dstPort))
 	}
 
 	return nil
