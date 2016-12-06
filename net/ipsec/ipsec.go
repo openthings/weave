@@ -137,7 +137,9 @@ func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort int, 
 }
 
 func Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
-	if err := netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, outSPI)); err != nil {
+	var err error
+
+	if err = netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, outSPI)); err != nil {
 		return errors.Wrap(err, "netlink.XfrmPolicyDel")
 	}
 
@@ -153,14 +155,24 @@ func Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
 		Proto: netlink.XFRM_PROTO_ESP,
 		Spi:   int(outSPI),
 	}
-	if err := netlink.XfrmStateDel(inSA); err != nil {
+	inSA, err = netlink.XfrmStateGet(inSA)
+	if err != nil {
+		return errors.Wrap(err, "netlink.XfrmStateGet")
+	}
+	outSA, err = netlink.XfrmStateGet(outSA)
+	if err != nil {
+		return errors.Wrap(err, "netlink.XfrmStateGet")
+	}
+	if err = netlink.XfrmStateDel(inSA); err != nil {
 		return errors.Wrap(err, "netlink.XfrmStateDel")
 	}
-	if err := netlink.XfrmStateDel(outSA); err != nil {
+	if err = netlink.XfrmStateDel(outSA); err != nil {
 		return errors.Wrap(err, "netlink.XfrmStateDel")
 	}
 
-	// TODO(mp) iptables
+	if err = removeMarkRule(srcIP, dstIP, dstPort); err != nil {
+		return errors.Wrap(err, "removeMarkRule")
+	}
 
 	return nil
 }
@@ -223,6 +235,25 @@ func installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 		"-j", markChain,
 	}
 	if err := ipt.AppendUnique(table, mainChain, rulespec...); err != nil {
+		return errors.Wrap(err, "ipt.AppendUnique()")
+	}
+
+	return nil
+}
+
+// TODO(mp) DRY
+func removeMarkRule(srcIP, dstIP net.IP, dstPort int) error {
+	ipt, err := iptables.New()
+	if err != nil {
+		return errors.Wrap(err, "iptables.New()")
+	}
+
+	rulespec := []string{
+		"-s", srcIP.String(), "-d", dstIP.String(),
+		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
+		"-j", markChain,
+	}
+	if err := ipt.Delete(table, mainChain, rulespec...); err != nil {
 		return errors.Wrap(err, "ipt.AppendUnique()")
 	}
 
