@@ -5,6 +5,7 @@ package ipsec
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
 // * Handle EEXIST for XFRM policies / SAs (best-effort?)
+// * What happens in the case of fastdp->sleeve, does Stop get called?
 
 // * Tests.
 // * Design documentation.
@@ -48,11 +49,33 @@ const (
 	skbMark = uint32(0x77766e74)
 )
 
+type IPSec struct {
+	ipt *iptables.IPTables
+	// reference counting for IPSec connections as mesh simultaneously might
+	// create two connections at the same time (hence, PrepareConnection is
+	// invoked twice for the same peer pair).
+	connRefs map[[12]byte]int
+}
+
 // API
+
+func New() (*IPSec, error) {
+	ipt, err := iptables.New()
+	if err != nil {
+		return nil, errors.Wrap(err, "iptables new")
+	}
+
+	ipsec := &IPSec{
+		ipt:      ipt,
+		connRefs: make(map[[12]byte]int),
+	}
+
+	return ipsec, nil
+}
 
 // A Reset flushes relevant XFRM polices / SAs and resets relevant iptables
 // rules.
-func Reset() error {
+func (ipsec *IPSec) Reset() error {
 	spis := make(map[SPI]struct{})
 
 	policies, err := netlink.XfrmPolicyList(syscall.AF_INET)
@@ -84,7 +107,7 @@ func Reset() error {
 		}
 	}
 
-	if err := resetIPTables(); err != nil {
+	if err := ipsec.resetIPTables(); err != nil {
 		return errors.Wrap(err, "reset ip tables")
 	}
 
@@ -92,16 +115,25 @@ func Reset() error {
 }
 
 // A Setup sets up IPSec for a tunnel between srcIP and dstIP.
-func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort int, localKey, remoteKey []byte) (SPI, error) {
+func (ipsec *IPSec) Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort int, localKey, remoteKey []byte) (SPI, error) {
 	outSPI, err := newSPI(srcPeer, dstPeer)
 	if err != nil {
 		return 0,
-			errors.Wrap(err, fmt.Sprintf("derive SPI (%s, %s)", srcPeer, dstPeer))
+			errors.Wrap(err, fmt.Sprintf("derive SPI (%x, %x)", srcPeer, dstPeer))
 	}
+
+	key := connRefsKey(srcIP, dstIP, outSPI)
+	ipsec.connRefs[key]++
+
+	if ipsec.connRefs[key] > 1 {
+		// IPSec has been already set up
+		return outSPI, nil
+	}
+
 	inSPI, err := newSPI(dstPeer, srcPeer)
 	if err != nil {
 		return 0,
-			errors.Wrap(err, fmt.Sprintf("derive SPI (%s, %s)", dstPeer, srcPeer))
+			errors.Wrap(err, fmt.Sprintf("derive SPI (%x, %x)", dstPeer, srcPeer))
 	}
 
 	// TODO(mp) make sure that keys are not logged
@@ -130,7 +162,7 @@ func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort int, 
 			errors.Wrap(err, fmt.Sprintf("xfrm policy add (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
 	}
 
-	if err := installMarkRule(srcIP, dstIP, dstPort); err != nil {
+	if err := ipsec.installMarkRule(srcIP, dstIP, dstPort); err != nil {
 		return 0,
 			errors.Wrap(err, fmt.Sprintf("install mark rule (%s, %s, 0x%x)", srcIP, dstIP, dstPort))
 	}
@@ -138,8 +170,18 @@ func Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort int, 
 	return outSPI, nil
 }
 
-func Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
+func (ipsec *IPSec) Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
 	var err error
+
+	key := connRefsKey(srcIP, dstIP, outSPI)
+	ipsec.connRefs[key]--
+
+	switch {
+	case ipsec.connRefs[key] > 0:
+		return nil
+	case ipsec.connRefs[key] < 0:
+		return fmt.Errorf("IPSec invalid state")
+	}
 
 	if err = netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, outSPI)); err != nil {
 		return errors.Wrap(err,
@@ -167,15 +209,67 @@ func Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
 			fmt.Sprintf("xfrm state del (out, %s, %s, 0x%x)", outSA.Src, outSA.Dst, outSA.Spi))
 	}
 
-	if err = removeMarkRule(srcIP, dstIP, dstPort); err != nil {
+	if err = ipsec.removeMarkRule(srcIP, dstIP, dstPort); err != nil {
 		return errors.Wrap(err,
-			fmt.Sprintf("remove mark rule (%s, %s, %s)", srcIP, dstIP, dstPort))
+			fmt.Sprintf("remove mark rule (%s, %s, %d)", srcIP, dstIP, dstPort))
 	}
 
 	return nil
 }
 
-// xfrm
+// iptables
+
+func (ipsec *IPSec) installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
+	rulespec := []string{
+		"-s", srcIP.String(), "-d", dstIP.String(),
+		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
+		"-j", markChain,
+	}
+	if err := ipsec.ipt.AppendUnique(table, mainChain, rulespec...); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, mainChain, rulespec))
+	}
+
+	return nil
+}
+
+// TODO(mp) DRY
+func (ipsec *IPSec) removeMarkRule(srcIP, dstIP net.IP, dstPort int) error {
+	rulespec := []string{
+		"-s", srcIP.String(), "-d", dstIP.String(),
+		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
+		"-j", markChain,
+	}
+	if err := ipsec.ipt.Delete(table, mainChain, rulespec...); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables delete (%s, %s, %s)", table, mainChain, rulespec))
+	}
+
+	return nil
+}
+
+func (ipsec *IPSec) resetIPTables() error {
+	if err := ipsec.ipt.ClearChain(table, mainChain); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables clear (%s, %s)", table, mainChain))
+	}
+
+	if err := ipsec.ipt.ClearChain(table, markChain); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables clear (%s, %s)", table, markChain))
+	}
+
+	if err := ipsec.ipt.AppendUnique(table, "OUTPUT", "-j", mainChain); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s)", table, "OUTPUT"))
+	}
+
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, skbMark)
+	rulespec := []string{"-j", "MARK", "--set-mark", "0x" + hex.EncodeToString(b)}
+	if err := ipsec.ipt.Append(table, markChain, rulespec...); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, markChain, rulespec))
+	}
+
+	return nil
+}
+
+// helpers
 
 func xfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, error) {
 	if len(key) != 36 {
@@ -219,75 +313,6 @@ func xfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 	}
 }
 
-// iptables
-
-func installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
-	ipt, err := iptables.New()
-	if err != nil {
-		return errors.Wrap(err, "iptables new")
-	}
-
-	rulespec := []string{
-		"-s", srcIP.String(), "-d", dstIP.String(),
-		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
-		"-j", markChain,
-	}
-	if err := ipt.AppendUnique(table, mainChain, rulespec...); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, mainChain, rulespec))
-	}
-
-	return nil
-}
-
-// TODO(mp) DRY
-func removeMarkRule(srcIP, dstIP net.IP, dstPort int) error {
-	ipt, err := iptables.New()
-	if err != nil {
-		return errors.Wrap(err, "iptables new")
-	}
-
-	rulespec := []string{
-		"-s", srcIP.String(), "-d", dstIP.String(),
-		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
-		"-j", markChain,
-	}
-	if err := ipt.Delete(table, mainChain, rulespec...); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("iptables delete (%s, %s, %s)", table, mainChain, rulespec))
-	}
-
-	return nil
-}
-
-func resetIPTables() error {
-	ipt, err := iptables.New()
-	if err != nil {
-		return errors.Wrap(err, "iptables new")
-	}
-
-	if err := ipt.ClearChain(table, mainChain); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("iptables clear (%s, %s)", table, mainChain))
-	}
-
-	if err := ipt.ClearChain(table, markChain); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("iptables clear (%s, %s)", table, markChain))
-	}
-
-	if err := ipt.AppendUnique(table, "OUTPUT", "-j", mainChain); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s)", table, "OUTPUT"))
-	}
-
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, skbMark)
-	rulespec := []string{"-j", "MARK", "--set-mark", "0x" + hex.EncodeToString(b)}
-	if err := ipt.Append(table, markChain, rulespec...); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, markChain, rulespec))
-	}
-
-	return nil
-}
-
-// helpers
-
 // | 0.. SRC_PEER | 0.. DST_PEER |
 func newSPI(srcPeer, dstPeer mesh.PeerShortID) (SPI, error) {
 	var spi SPI
@@ -304,4 +329,12 @@ func newSPI(srcPeer, dstPeer mesh.PeerShortID) (SPI, error) {
 
 func reverseSPI(spi SPI) SPI {
 	return SPI(uint32(spi)>>16 | uint32(spi)<<16)
+}
+
+func connRefsKey(srcIP, dstIP net.IP, spi SPI) (key [12]byte) {
+	copy(key[:], srcIP.To4())
+	copy(key[4:], dstIP.To4())
+	binary.BigEndian.PutUint32(key[8:], uint32(spi))
+
+	return
 }

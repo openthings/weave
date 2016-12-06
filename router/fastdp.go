@@ -42,7 +42,7 @@ type FastDatapath struct {
 	localPeer        *mesh.Peer
 	peers            *mesh.Peers
 	overlayConsumer  OverlayConsumer
-	enableEncryption bool
+	ipsec            *ipsec.IPSec
 
 	// Bridge state: How to send to the given bridge port
 	sendToPort map[bridgePortID]bridgeSender
@@ -67,7 +67,9 @@ type FastDatapath struct {
 	forwarders map[mesh.PeerName]*fastDatapathForwarder
 }
 
-func NewFastDatapath(iface *net.Interface, port int, enableEncryption bool) (*FastDatapath, error) {
+func NewFastDatapath(iface *net.Interface, port int, encryptionEnabled bool) (*FastDatapath, error) {
+	var ipSec *ipsec.IPSec
+
 	dpif, err := odp.NewDpif()
 	if err != nil {
 		return nil, err
@@ -85,24 +87,28 @@ func NewFastDatapath(iface *net.Interface, port int, enableEncryption bool) (*Fa
 		return nil, err
 	}
 
-	if enableEncryption {
-		if err := ipsec.Reset(); err != nil {
-			return nil, err
+	if encryptionEnabled {
+		var err error
+		if ipSec, err = ipsec.New(); err != nil {
+			return nil, errors.Wrap(err, "ipsec new")
+		}
+		if err := ipSec.Reset(); err != nil {
+			return nil, errors.Wrap(err, "ipsec reset")
 		}
 	}
 
 	fastdp := &FastDatapath{
-		iface:            iface,
-		dpif:             dpif,
-		dp:               dp,
-		missHandlers:     make(map[odp.VportID]missHandler),
-		enableEncryption: enableEncryption,
-		sendToPort:       nil,
-		sendToMAC:        make(map[MAC]bridgeSender),
-		seenMACs:         make(map[MAC]struct{}),
-		vxlanUDPPorts:    make(map[int]odp.VportID),
-		vxlanVportIDs:    make(map[odp.VportID]struct{}),
-		forwarders:       make(map[mesh.PeerName]*fastDatapathForwarder),
+		iface:         iface,
+		dpif:          dpif,
+		dp:            dp,
+		missHandlers:  make(map[odp.VportID]missHandler),
+		ipsec:         ipSec,
+		sendToPort:    nil,
+		sendToMAC:     make(map[MAC]bridgeSender),
+		seenMACs:      make(map[MAC]struct{}),
+		vxlanUDPPorts: make(map[int]odp.VportID),
+		vxlanVportIDs: make(map[odp.VportID]struct{}),
+		forwarders:    make(map[mesh.PeerName]*fastDatapathForwarder),
 	}
 
 	// This delete happens asynchronously in the kernel, meaning that
@@ -579,8 +585,6 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		spi         ipsec.SPI
 	)
 
-	fmt.Println("!!!!!!!!! >>>", params.RemoteAddr)
-
 	remoteAddr := makeUDPAddr(params.RemoteAddr)
 	if params.Outbound {
 		// The provided address contains the main weave port
@@ -605,10 +609,10 @@ func (fastdp fastDatapathOverlay) PrepareConnection(params mesh.OverlayConnectio
 		return nil, err
 	}
 
-	if fastdp.enableEncryption && params.LocalSAKey != nil && params.RemoteSAKey != nil {
+	if fastdp.ipsec != nil && params.LocalSAKey != nil && params.RemoteSAKey != nil {
 		var err error
 		log.Info("setting up IPSec between ", params.LocalAddr.IP, " and ", params.RemoteAddr.IP)
-		spi, err = ipsec.Setup(
+		spi, err = fastdp.ipsec.Setup(
 			fastdp.localPeer.ShortID, params.RemotePeer.ShortID,
 			// TODO(mp) consistency (remoteAddr)
 			params.LocalAddr.IP, params.RemoteAddr.IP,
@@ -723,8 +727,6 @@ func (fwd *fastDatapathForwarder) handleError(err error) {
 	case fwd.errorChan <- err:
 	default:
 	}
-
-	// TODO(mp) teardown IPSec
 
 	// stop the heartbeat goroutine
 	if !fwd.stopped {
@@ -882,7 +884,7 @@ func (fwd *fastDatapathForwarder) Stop() {
 	if fwd.isEncrypted {
 		localIP := net.IP(fwd.localIP[:])
 		log.Info("ipsec Teardown", localIP, fwd.remoteAddr.IP)
-		err := ipsec.Teardown(localIP, fwd.remoteAddr.IP, fwd.remoteAddr.Port, fwd.spi)
+		err := fwd.fastdp.ipsec.Teardown(localIP, fwd.remoteAddr.IP, fwd.remoteAddr.Port, fwd.spi)
 		if err != nil {
 			log.Errorf("unable to teardown IPSec between %s and %s: %s", localIP, fwd.remoteAddr.IP, err)
 		}
