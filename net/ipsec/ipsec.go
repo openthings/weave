@@ -1,12 +1,14 @@
 package ipsec
 
 // TODO
-// * Locking!
 // * Handle the case when params.RemoteAddr is not present.
+//
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
+//
 // * Handle EEXIST for XFRM policies / SAs (best-effort?)
 // * What happens in the case of fastdp->sleeve, does Stop get called?
+//
 // * Extend the heartbeats to check whether encryption is properly set.
 
 // * Tests.
@@ -17,8 +19,6 @@ package ipsec
 //
 // * Cleanup log messages.
 // * Cleanup errors.Wrap.
-//
-// * type IPSec struct { ipt *iptables.IPTables }
 //
 // * Various XFRM related improvements to vishvananda/netlink.
 // * Patch the kernel.
