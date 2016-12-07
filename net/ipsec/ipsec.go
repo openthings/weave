@@ -1,11 +1,13 @@
 package ipsec
 
 // TODO
+// * Locking!
 // * Handle the case when params.RemoteAddr is not present.
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
 // * Handle EEXIST for XFRM policies / SAs (best-effort?)
 // * What happens in the case of fastdp->sleeve, does Stop get called?
+// * Extend the heartbeats to check whether encryption is properly set.
 
 // * Tests.
 // * Design documentation.
@@ -30,6 +32,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"sync"
 	"syscall"
 
 	"github.com/coreos/go-iptables/iptables"
@@ -49,15 +52,12 @@ const (
 	skbMark = uint32(0x77766e74)
 )
 
+// IPSec
+
 type IPSec struct {
 	ipt *iptables.IPTables
-	// reference counting for IPSec connections as mesh simultaneously might
-	// create two connections at the same time (hence, PrepareConnection is
-	// invoked twice for the same peer pair).
-	connRefs map[[12]byte]int
+	rc  *connRefCount
 }
-
-// API
 
 func New() (*IPSec, error) {
 	ipt, err := iptables.New()
@@ -66,8 +66,8 @@ func New() (*IPSec, error) {
 	}
 
 	ipsec := &IPSec{
-		ipt:      ipt,
-		connRefs: make(map[[12]byte]int),
+		ipt: ipt,
+		rc:  newConnRefCount(),
 	}
 
 	return ipsec, nil
@@ -122,11 +122,8 @@ func (ipsec *IPSec) Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP
 			errors.Wrap(err, fmt.Sprintf("derive SPI (%x, %x)", srcPeer, dstPeer))
 	}
 
-	key := connRefsKey(srcIP, dstIP, outSPI)
-	ipsec.connRefs[key]++
-
-	if ipsec.connRefs[key] > 1 {
-		// IPSec has been already set up
+	if ipsec.rc.get(srcIP, dstIP, outSPI) > 1 {
+		// IPSec has been already set up between the given peers
 		return outSPI, nil
 	}
 
@@ -173,13 +170,11 @@ func (ipsec *IPSec) Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP
 func (ipsec *IPSec) Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
 	var err error
 
-	key := connRefsKey(srcIP, dstIP, outSPI)
-	ipsec.connRefs[key]--
-
+	count := ipsec.rc.put(srcIP, dstIP, outSPI)
 	switch {
-	case ipsec.connRefs[key] > 0:
+	case count > 0:
 		return nil
-	case ipsec.connRefs[key] < 0:
+	case count < 0:
 		return fmt.Errorf("IPSec invalid state")
 	}
 
@@ -217,14 +212,45 @@ func (ipsec *IPSec) Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error
 	return nil
 }
 
+// connRefCount
+
+// Reference counting for IPSec connections.
+// The motivation for counting is that mesh might simultaneously create two
+// connections for the same peer pair. Thus, we need to avoid setting up IPSec
+// twice.
+type connRefCount struct {
+	sync.RWMutex
+	ref map[[12]byte]int
+}
+
+func newConnRefCount() *connRefCount {
+	return &connRefCount{ref: make(map[[12]byte]int)}
+}
+
+func (rc *connRefCount) get(srcIP, dstIP net.IP, spi SPI) int {
+	rc.Lock()
+	defer rc.Unlock()
+
+	key := connRefKey(srcIP, dstIP, spi)
+	rc.ref[key]++
+
+	return rc.ref[key]
+}
+
+func (rc *connRefCount) put(srcIP, dstIP net.IP, spi SPI) int {
+	rc.Lock()
+	defer rc.Unlock()
+
+	key := connRefKey(srcIP, dstIP, spi)
+	rc.ref[key]--
+
+	return rc.ref[key]
+}
+
 // iptables
 
 func (ipsec *IPSec) installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
-	rulespec := []string{
-		"-s", srcIP.String(), "-d", dstIP.String(),
-		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
-		"-j", markChain,
-	}
+	rulespec := markRulespec(srcIP, dstIP, dstPort)
 	if err := ipsec.ipt.AppendUnique(table, mainChain, rulespec...); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, mainChain, rulespec))
 	}
@@ -232,18 +258,22 @@ func (ipsec *IPSec) installMarkRule(srcIP, dstIP net.IP, dstPort int) error {
 	return nil
 }
 
-// TODO(mp) DRY
 func (ipsec *IPSec) removeMarkRule(srcIP, dstIP net.IP, dstPort int) error {
-	rulespec := []string{
-		"-s", srcIP.String(), "-d", dstIP.String(),
-		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
-		"-j", markChain,
-	}
+	rulespec := markRulespec(srcIP, dstIP, dstPort)
 	if err := ipsec.ipt.Delete(table, mainChain, rulespec...); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("iptables delete (%s, %s, %s)", table, mainChain, rulespec))
 	}
 
 	return nil
+}
+
+func markRulespec(srcIP, dstIP net.IP, dstPort int) []string {
+	return []string{
+		"-s", srcIP.String(), "-d", dstIP.String(),
+		"-p", "udp", "--dport", strconv.FormatUint(uint64(dstPort), 10),
+		"-j", markChain,
+	}
+
 }
 
 func (ipsec *IPSec) resetIPTables() error {
@@ -269,7 +299,7 @@ func (ipsec *IPSec) resetIPTables() error {
 	return nil
 }
 
-// helpers
+// xfrm
 
 func xfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, error) {
 	if len(key) != 36 {
@@ -313,6 +343,8 @@ func xfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 	}
 }
 
+// helpers
+
 // | 0.. SRC_PEER | 0.. DST_PEER |
 func newSPI(srcPeer, dstPeer mesh.PeerShortID) (SPI, error) {
 	var spi SPI
@@ -331,7 +363,7 @@ func reverseSPI(spi SPI) SPI {
 	return SPI(uint32(spi)>>16 | uint32(spi)<<16)
 }
 
-func connRefsKey(srcIP, dstIP net.IP, spi SPI) (key [12]byte) {
+func connRefKey(srcIP, dstIP net.IP, spi SPI) (key [12]byte) {
 	copy(key[:], srcIP.To4())
 	copy(key[4:], dstIP.To4())
 	binary.BigEndian.PutUint32(key[8:], uint32(spi))
