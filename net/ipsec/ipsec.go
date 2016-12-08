@@ -2,6 +2,7 @@ package ipsec
 
 // TODO
 // * Handle the case when params.RemoteAddr is not present.
+// * Check for xfrm modules.
 //
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
@@ -10,6 +11,7 @@ package ipsec
 // * What happens in the case of fastdp->sleeve, does Stop get called?
 //
 // * Extend the heartbeats to check whether encryption is properly set.
+// * Rotate keys.
 
 // * Tests.
 // * Design documentation.
@@ -77,6 +79,9 @@ func New() (*IPSec, error) {
 // rules.
 func (ipsec *IPSec) Reset() error {
 	spis := make(map[SPI]struct{})
+
+	netlink.XfrmPolicyFlush()
+	netlink.XfrmStateFlush(netlink.XFRM_PROTO_ESP)
 
 	policies, err := netlink.XfrmPolicyList(syscall.AF_INET)
 	if err != nil {
@@ -159,10 +164,10 @@ func (ipsec *IPSec) Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP
 			errors.Wrap(err, fmt.Sprintf("xfrm policy add (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
 	}
 
-	if err := ipsec.installMarkRule(srcIP, dstIP, dstPort); err != nil {
-		return 0,
-			errors.Wrap(err, fmt.Sprintf("install mark rule (%s, %s, 0x%x)", srcIP, dstIP, dstPort))
-	}
+	//if err := ipsec.installMarkRule(srcIP, dstIP, dstPort); err != nil {
+	//	return 0,
+	//		errors.Wrap(err, fmt.Sprintf("install mark rule (%s, %s, 0x%x)", srcIP, dstIP, dstPort))
+	//}
 
 	return outSPI, nil
 }
@@ -204,10 +209,10 @@ func (ipsec *IPSec) Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error
 			fmt.Sprintf("xfrm state del (out, %s, %s, 0x%x)", outSA.Src, outSA.Dst, outSA.Spi))
 	}
 
-	if err = ipsec.removeMarkRule(srcIP, dstIP, dstPort); err != nil {
-		return errors.Wrap(err,
-			fmt.Sprintf("remove mark rule (%s, %s, %d)", srcIP, dstIP, dstPort))
-	}
+	//if err = ipsec.removeMarkRule(srcIP, dstIP, dstPort); err != nil {
+	//	return errors.Wrap(err,
+	//		fmt.Sprintf("remove mark rule (%s, %s, %d)", srcIP, dstIP, dstPort))
+	//}
 
 	return nil
 }
@@ -324,13 +329,14 @@ func xfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 	ipMask := []byte{0xff, 0xff, 0xff, 0xff} // /32
 
 	return &netlink.XfrmPolicy{
-		Src:   &net.IPNet{IP: srcIP, Mask: ipMask},
-		Dst:   &net.IPNet{IP: dstIP, Mask: ipMask},
-		Proto: syscall.IPPROTO_UDP,
-		Dir:   netlink.XFRM_DIR_OUT,
-		Mark: &netlink.XfrmMark{
-			Value: skbMark,
-		},
+		Src:     &net.IPNet{IP: srcIP, Mask: ipMask},
+		Dst:     &net.IPNet{IP: dstIP, Mask: ipMask},
+		Proto:   syscall.IPPROTO_UDP,
+		DstPort: 6784,
+		Dir:     netlink.XFRM_DIR_OUT,
+		//Mark: &netlink.XfrmMark{
+		//	Value: skbMark,
+		//},
 		Tmpls: []netlink.XfrmPolicyTmpl{
 			{
 				Src:   srcIP,
