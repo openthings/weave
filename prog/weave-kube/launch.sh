@@ -65,24 +65,6 @@ if [ -z "$IPALLOC_INIT" ]; then
     IPALLOC_INIT="consensus=$(peer_count $KUBE_PEERS)"
 fi
 
-/home/weave/weaver $EXTRA_ARGS --port=6783 $BRIDGE_OPTIONS \
-     --http-addr=$HTTP_ADDR --status-addr=$STATUS_ADDR --docker-api='' --no-dns \
-     --ipalloc-range=$IPALLOC_RANGE $NICKNAME_ARG \
-     --ipalloc-init $IPALLOC_INIT \
-     --name=$(cat /sys/class/net/weave/address) "$@" \
-     $KUBE_PEERS &
-WEAVE_PID=$!
-
-# Wait for weave process to become responsive
-while true ; do
-    curl $HTTP_ADDR/status >/dev/null 2>&1 && break
-    if ! kill -0 $WEAVE_PID >/dev/null 2>&1 ; then
-        echo Weave process has died >&2
-        exit 1
-    fi
-    sleep 1
-done
-
 reclaim_ips() {
     ID=$1
     shift
@@ -91,29 +73,44 @@ reclaim_ips() {
     done
 }
 
-# Tell the newly-started weave about existing weave bridge IPs
-/usr/bin/weaveutil container-addrs weave weave:expose | while read ID IFACE MAC IPS; do
-    reclaim_ips "weave:expose" $IPS
-done
-# Tell weave about existing weave process IPs
-/usr/bin/weaveutil process-addrs weave | while read ID IFACE MAC IPS; do
-    reclaim_ips "_" $IPS
-done
+post_start_actions() {
+    # Wait for weave process to become responsive
+    while true ; do
+        curl $HTTP_ADDR/status >/dev/null 2>&1 && break
+        sleep 1
+    done
 
-# Install CNI plugin binary to typical CNI bin location
-# with fall-back to CNI directory used by kube-up on GCI OS
-if mkdir -p /opt/cni/bin ; then
-    export WEAVE_CNI_PLUGIN_DIR=/opt/cni/bin
-elif mkdir -p /host_home/kubernetes/bin ; then
-    export WEAVE_CNI_PLUGIN_DIR=/host_home/kubernetes/bin
-else
-    echo "Failed to install the Weave CNI plugin" >&2
-    exit 1
-fi
-mkdir -p /etc/cni/net.d
-/home/weave/weave --local setup-cni
+    # Tell the newly-started weave about existing weave bridge IPs
+    /usr/bin/weaveutil container-addrs weave weave:expose | while read ID IFACE MAC IPS; do
+        reclaim_ips "weave:expose" $IPS
+    done
+    # Tell weave about existing weave process IPs
+    /usr/bin/weaveutil process-addrs weave | while read ID IFACE MAC IPS; do
+        reclaim_ips "_" $IPS
+    done
 
-# Expose the weave network so host processes can communicate with pods
-/home/weave/weave --local expose $WEAVE_EXPOSE_IP
+    # Install CNI plugin binary to typical CNI bin location
+    # with fall-back to CNI directory used by kube-up on GCI OS
+    if mkdir -p /opt/cni/bin ; then
+        export WEAVE_CNI_PLUGIN_DIR=/opt/cni/bin
+    elif mkdir -p /host_home/kubernetes/bin ; then
+        export WEAVE_CNI_PLUGIN_DIR=/host_home/kubernetes/bin
+    else
+        echo "Failed to install the Weave CNI plugin" >&2
+        exit 1
+    fi
+    mkdir -p /etc/cni/net.d
+    /home/weave/weave --local setup-cni
 
-wait $WEAVE_PID
+    # Expose the weave network so host processes can communicate with pods
+    /home/weave/weave --local expose $WEAVE_EXPOSE_IP
+}
+
+post_start_actions &
+
+exec /home/weave/weaver $EXTRA_ARGS --port=6783 $BRIDGE_OPTIONS \
+     --http-addr=$HTTP_ADDR --status-addr=$STATUS_ADDR --docker-api='' --no-dns \
+     --ipalloc-range=$IPALLOC_RANGE $NICKNAME_ARG \
+     --ipalloc-init $IPALLOC_INIT \
+     --name=$(cat /sys/class/net/weave/address) "$@" \
+     $KUBE_PEERS
