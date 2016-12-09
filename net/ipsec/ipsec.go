@@ -2,8 +2,6 @@ package ipsec
 
 // TODO
 // Friday:
-// * Remove fastdp flows upon `weave reset`.
-// * Remove ipsec upon `weave reset`.
 // * Tests.
 // * Test NAT-T in tunnel mode (fragmentation might be an issue).
 // * Do not store {local,reset}SAKey in mesh connection state.
@@ -73,7 +71,7 @@ func New() (*IPSec, error) {
 
 // A Reset flushes relevant XFRM polices / SAs and resets relevant iptables
 // rules.
-func (ipsec *IPSec) Reset() error {
+func (ipsec *IPSec) Reset(teardown bool) error {
 	spis := make(map[SPI]struct{})
 
 	policies, err := netlink.XfrmPolicyList(syscall.AF_INET)
@@ -105,7 +103,7 @@ func (ipsec *IPSec) Reset() error {
 		}
 	}
 
-	if err := ipsec.resetIPTables(); err != nil {
+	if err := ipsec.resetIPTables(teardown); err != nil {
 		return errors.Wrap(err, "reset ip tables")
 	}
 
@@ -274,7 +272,7 @@ func markRulespec(srcIP, dstIP net.IP, dstPort int) []string {
 
 }
 
-func (ipsec *IPSec) resetIPTables() error {
+func (ipsec *IPSec) resetIPTables(teardown bool) error {
 	if err := ipsec.ipt.ClearChain(table, mainChain); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("iptables clear (%s, %s)", table, mainChain))
 	}
@@ -287,11 +285,28 @@ func (ipsec *IPSec) resetIPTables() error {
 		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s)", table, "OUTPUT"))
 	}
 
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, skbMark)
-	rulespec := []string{"-j", "MARK", "--set-mark", "0x" + hex.EncodeToString(b)}
-	if err := ipsec.ipt.Append(table, markChain, rulespec...); err != nil {
-		return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, markChain, rulespec))
+	if !teardown {
+		b := make([]byte, 4)
+		binary.BigEndian.PutUint32(b, skbMark)
+		rulespec := []string{"-j", "MARK", "--set-mark", "0x" + hex.EncodeToString(b)}
+		if err := ipsec.ipt.Append(table, markChain, rulespec...); err != nil {
+			return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, markChain, rulespec))
+		}
+
+		return nil
+	}
+
+	// TODO(mp) DRY
+	if err := ipsec.ipt.Delete(table, "OUTPUT", "-j", mainChain); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables delete (%s, %s)", table, "OUTPUT"))
+	}
+
+	if err := ipsec.ipt.DeleteChain(table, mainChain); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables delete (%s, %s)", table, mainChain))
+	}
+
+	if err := ipsec.ipt.DeleteChain(table, markChain); err != nil {
+		return errors.Wrap(err, fmt.Sprintf("iptables delete (%s, %s)", table, mainChain))
 	}
 
 	return nil

@@ -92,7 +92,7 @@ func NewFastDatapath(iface *net.Interface, port int, encryptionEnabled bool) (*F
 		if ipSec, err = ipsec.New(); err != nil {
 			return nil, errors.Wrap(err, "ipsec new")
 		}
-		if err := ipSec.Reset(); err != nil {
+		if err := ipSec.Reset(false); err != nil {
 			return nil, errors.Wrap(err, "ipsec reset")
 		}
 	}
@@ -335,7 +335,11 @@ func (fastdp fastDatapathOverlay) InvalidateShortIDs() {
 }
 
 func (fastdp fastDatapathOverlay) Stop() {
-	// TODO(mp) teardown IPSEC conns
+	if fastdp.ipsec != nil {
+		if err := fastdp.ipsec.Reset(true); err != nil {
+			log.Errorf("IPSec reset failed: %s", err)
+		}
+	}
 }
 
 func (fastDatapathOverlay) AddFeaturesTo(features map[string]string) {
