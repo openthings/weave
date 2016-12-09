@@ -1,24 +1,22 @@
 package ipsec
 
 // TODO
-// * Handle the case when params.RemoteAddr is not present.
-//
+// Friday:
 // * Remove fastdp flows upon `weave reset`.
 // * Remove ipsec upon `weave reset`.
+// * Tests.
+// * Test NAT-T in tunnel mode (fragmentation might be an issue).
+// * Do not store {local,reset}SAKey in mesh connection state.
+// * Cleanup log messages.
+// * Cleanup errors.Wrap.
+// * Design documentation.
+// * Open PR.
 //
 // * Handle EEXIST for XFRM policies / SAs (best-effort?)
 // * What happens in the case of fastdp->sleeve, does Stop get called?
-//
 // * Extend the heartbeats to check whether encryption is properly set.
 
-// * Tests.
-// * Design documentation.
-// * Test NAT-T in tunnel mode (fragmentation might be an issue).
 // * Check how k8s does marking to prevent possible collisions.
-// * Do not store {local,reset}SAKey in mesh connection state.
-//
-// * Cleanup log messages.
-// * Cleanup errors.Wrap.
 //
 // * Various XFRM related improvements to vishvananda/netlink.
 // * Patch the kernel.
