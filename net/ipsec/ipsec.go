@@ -1,9 +1,8 @@
 package ipsec
 
 // TODO
-// Friday:
 // * Tests.
-// * Test NAT-T in tunnel mode (fragmentation might be an issue).
+// * Test NAT-T in tunnel mode.
 // * Do not store {local,reset}SAKey in mesh connection state.
 // * Cleanup log messages.
 // * Cleanup errors.Wrap.
@@ -13,6 +12,7 @@ package ipsec
 // * Handle EEXIST for XFRM policies / SAs (best-effort?)
 // * What happens in the case of fastdp->sleeve, does Stop get called?
 // * Extend the heartbeats to check whether encryption is properly set.
+// * Rotate keys.
 
 // * Check how k8s does marking to prevent possible collisions.
 //
@@ -20,7 +20,7 @@ package ipsec
 // * Patch the kernel.
 //
 // * Overhead for having additional chain.
-// * transport vs tunnel mode benchmarks.
+// * Transport vs tunnel mode benchmarks.
 
 import (
 	"encoding/binary"
