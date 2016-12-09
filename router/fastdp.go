@@ -334,6 +334,10 @@ func (fastdp fastDatapathOverlay) InvalidateShortIDs() {
 	checkWarn(fastdp.deleteFlows())
 }
 
+func (fastdp fastDatapathOverlay) Stop() {
+	// TODO(mp) teardown IPSEC conns
+}
+
 func (fastDatapathOverlay) AddFeaturesTo(features map[string]string) {
 	// Nothing needed.  Fast datapath support is indicated through
 	// OverlaySwitch.
