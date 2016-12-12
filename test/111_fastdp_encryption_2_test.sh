@@ -63,4 +63,4 @@ assert "$SSH $HOST1 sudo ip xfrm state" ""
 assert "$SSH $HOST1 sudo ip xfrm policy" ""
 assert "$SSH $HOST1 sudo iptables -t mangle -S WEAVE-IPSEC | grep '\-A'" ""
 
-#end_suite
+end_suite
