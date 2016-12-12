@@ -2,12 +2,10 @@ package ipsec
 
 // TODO
 // * Tests.
-// * Test NAT-T in tunnel mode.
 // * Do not store {local,reset}SAKey in mesh connection state.
-// * Cleanup log messages.
-// * Cleanup errors.Wrap.
+// * Pick SKB.
+// * Test NAT-T in tunnel mode.
 // * Design documentation.
-// * Open PR.
 //
 // * Handle EEXIST for XFRM policies / SAs (best-effort?)
 // * What happens in the case of fastdp->sleeve, does Stop get called?
