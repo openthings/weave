@@ -5,6 +5,8 @@ package ipsec
 // * Pick SKB.
 // * Test NAT-T in tunnel mode.
 // * Design documentation.
+// * Blogpost.
+// * Document MTU requirements.
 //
 // * Extend the heartbeats to check whether encryption is properly set.
 // * Rotate keys.
@@ -19,7 +21,6 @@ package ipsec
 
 import (
 	"encoding/binary"
-	"encoding/hex"
 	"fmt"
 	"net"
 	"strconv"
@@ -40,7 +41,9 @@ const (
 	markChain = "WEAVE-IPSEC-MARK"
 	mainChain = "WEAVE-IPSEC"
 
-	skbMark = uint32(0x77766e74)
+	// TODO(mp) pass as arg
+	skbMark    = uint32(0x1) << 17
+	skbMarkStr = "0x20000/0x20000"
 )
 
 // IPSec
@@ -281,9 +284,7 @@ func (ipsec *IPSec) resetIPTables(teardown bool) error {
 	}
 
 	if !teardown {
-		b := make([]byte, 4)
-		binary.BigEndian.PutUint32(b, skbMark)
-		rulespec := []string{"-j", "MARK", "--set-mark", "0x" + hex.EncodeToString(b)}
+		rulespec := []string{"-j", "MARK", "--set-xmark", skbMarkStr}
 		if err := ipsec.ipt.Append(table, markChain, rulespec...); err != nil {
 			return errors.Wrap(err, fmt.Sprintf("iptables append (%s, %s, %s)", table, markChain, rulespec))
 		}
@@ -338,6 +339,7 @@ func xfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
 		Dir:   netlink.XFRM_DIR_OUT,
 		Mark: &netlink.XfrmMark{
 			Value: skbMark,
+			Mask:  skbMark,
 		},
 		Tmpls: []netlink.XfrmPolicyTmpl{
 			{
