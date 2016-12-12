@@ -30,9 +30,9 @@ test:
     - "$SRCDIR/bin/circle-test-smoke":
         parallel: true
         timeout: 300
-#  post:
-#    - "$SRCDIR/bin/circle-test-teardown":
-#        parallel: true
+  post:
+    - "$SRCDIR/bin/circle-test-teardown":
+        parallel: true
 
 teardown:
   pre:
