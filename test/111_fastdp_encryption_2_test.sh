@@ -2,6 +2,9 @@
 
 . ./config.sh
 
+HOST1_IP=$($SSH $HOST1 getent ahosts $HOST1 | grep "RAW" | cut -d' ' -f1)
+HOST2_IP=$($SSH $HOST2 getent ahosts $HOST2 | grep "RAW" | cut -d' ' -f1)
+
 start_tcpdump() {
     HOST=$1
     PCAP=$2
@@ -18,11 +21,11 @@ stop_tcpdump() {
 assert_pcap() {
     PCAP=$1
     # All vxlan tunneled traffic goes over ESP
-    assert "tcpdump -r $PCAP 'src $HOST1 && dst $HOST2 && dst port 6784'" ""
-    assert "tcpdump -r $PCAP 'src $HOST2 && dst $HOST1 && dst port 6784'" ""
+    assert "tcpdump -r $PCAP 'src $HOST1_IP && dst $HOST2_IP && dst port 6784'" ""
+    assert "tcpdump -r $PCAP 'src $HOST2_IP && dst $HOST1_IP && dst port 6784'" ""
     # ip_proto(ESP) = 50
-    assert_raises "[[ -n \"$(tcpdump -r $PCAP "src $HOST1 && dst $HOST2 && proto 50")\" ]]"
-    assert_raises "[[ -n \"$(tcpdump -r $PCAP "src $HOST2 && dst $HOST1 && proto 50")\" ]]"
+    assert_raises "[[ -n \"$(tcpdump -r $PCAP "src $HOST1_IP && dst $HOST2_IP && proto 50")\" ]]"
+    assert_raises "[[ -n \"$(tcpdump -r $PCAP "src $HOST2_IP && dst $HOST1_IP && proto 50")\" ]]"
 
     rm -f $PCAP
 }
@@ -60,4 +63,4 @@ assert "$SSH $HOST1 sudo ip xfrm state" ""
 assert "$SSH $HOST1 sudo ip xfrm policy" ""
 assert "$SSH $HOST1 sudo iptables -t mangle -S WEAVE-IPSEC | grep '\-A'" ""
 
-end_suite
+#end_suite

@@ -1,14 +1,11 @@
 package ipsec
 
 // TODO
-// * Tests.
 // * Do not store {local,reset}SAKey in mesh connection state.
 // * Pick SKB.
 // * Test NAT-T in tunnel mode.
 // * Design documentation.
 //
-// * Handle EEXIST for XFRM policies / SAs (best-effort?)
-// * What happens in the case of fastdp->sleeve, does Stop get called?
 // * Extend the heartbeats to check whether encryption is properly set.
 // * Rotate keys.
 
