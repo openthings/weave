@@ -2,7 +2,6 @@ package ipsec
 
 // TODO
 // * Do not store {local,reset}SAKey in mesh connection state.
-// * Pick SKB.
 // * Test NAT-T in tunnel mode.
 // * Design documentation.
 // * Blogpost.
@@ -11,8 +10,6 @@ package ipsec
 // * Extend the heartbeats to check whether encryption is properly set.
 // * Rotate keys.
 
-// * Check how k8s does marking to prevent possible collisions.
-//
 // * Various XFRM related improvements to vishvananda/netlink.
 // * Patch the kernel.
 //
@@ -127,8 +124,6 @@ func (ipsec *IPSec) Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP
 			errors.Wrap(err, fmt.Sprintf("derive SPI (%x, %x)", dstPeer, srcPeer))
 	}
 
-	// TODO(mp) make sure that keys are not logged
-
 	if inSA, err := xfrmState(dstIP, srcIP, inSPI, remoteKey); err == nil {
 		if err := netlink.XfrmStateAdd(inSA); err != nil {
 			return 0,
@@ -147,7 +142,7 @@ func (ipsec *IPSec) Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP
 		return 0, errors.Wrap(err, "new xfrm state (out)")
 	}
 
-	outPolicy := xfrmPolicy(srcIP, dstIP, outSPI)
+	outPolicy := xfrmPolicy(srcIP, dstIP, dstPort, outSPI)
 	if err := netlink.XfrmPolicyAdd(outPolicy); err != nil {
 		return 0,
 			errors.Wrap(err, fmt.Sprintf("xfrm policy add (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
@@ -172,7 +167,7 @@ func (ipsec *IPSec) Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error
 		return fmt.Errorf("IPSec invalid state")
 	}
 
-	if err = netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, outSPI)); err != nil {
+	if err = netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, dstPort, outSPI)); err != nil {
 		return errors.Wrap(err,
 			fmt.Sprintf("xfrm policy del (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
 	}
@@ -329,14 +324,15 @@ func xfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, er
 	}, nil
 }
 
-func xfrmPolicy(srcIP, dstIP net.IP, spi SPI) *netlink.XfrmPolicy {
+func xfrmPolicy(srcIP, dstIP net.IP, dstPort int, spi SPI) *netlink.XfrmPolicy {
 	ipMask := []byte{0xff, 0xff, 0xff, 0xff} // /32
 
 	return &netlink.XfrmPolicy{
-		Src:   &net.IPNet{IP: srcIP, Mask: ipMask},
-		Dst:   &net.IPNet{IP: dstIP, Mask: ipMask},
-		Proto: syscall.IPPROTO_UDP,
-		Dir:   netlink.XFRM_DIR_OUT,
+		Src:     &net.IPNet{IP: srcIP, Mask: ipMask},
+		Dst:     &net.IPNet{IP: dstIP, Mask: ipMask},
+		DstPort: dstPort,
+		Proto:   syscall.IPPROTO_UDP,
+		Dir:     netlink.XFRM_DIR_OUT,
 		Mark: &netlink.XfrmMark{
 			Value: skbMark,
 			Mask:  skbMark,
