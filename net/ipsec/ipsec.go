@@ -1,7 +1,6 @@
 package ipsec
 
 // TODO
-// * Do not store {local,reset}SAKey in mesh connection state.
 // * Test NAT-T in tunnel mode.
 // * Design documentation.
 // * Blogpost.
@@ -38,7 +37,7 @@ const (
 	markChain = "WEAVE-IPSEC-MARK"
 	mainChain = "WEAVE-IPSEC"
 
-	// TODO(mp) pass as arg
+	// TODO(mp) pass as arg and document it properly
 	skbMark    = uint32(0x1) << 17
 	skbMarkStr = "0x20000/0x20000"
 )
@@ -74,8 +73,7 @@ func (ipsec *IPSec) Reset(teardown bool) error {
 		return errors.Wrap(err, "xfrm policy list")
 	}
 	for _, p := range policies {
-		if p.Mark != nil && p.Mark.Value == skbMark {
-			// TODO(mp) this might fail, maybe ignore if tmpls is nil?
+		if p.Mark != nil && p.Mark.Value == skbMark && len(p.Tmpls) != 0 {
 			spi := SPI(p.Tmpls[0].Spi)
 			spis[spi] = struct{}{}
 			spis[reverseSPI(spi)] = struct{}{}
@@ -287,7 +285,6 @@ func (ipsec *IPSec) resetIPTables(teardown bool) error {
 		return nil
 	}
 
-	// TODO(mp) DRY
 	if err := ipsec.ipt.Delete(table, "OUTPUT", "-j", mainChain); err != nil {
 		return errors.Wrap(err, fmt.Sprintf("iptables delete (%s, %s)", table, "OUTPUT"))
 	}
@@ -313,9 +310,9 @@ func xfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, er
 	return &netlink.XfrmState{
 		Src:   srcIP,
 		Dst:   dstIP,
-		Proto: netlink.XFRM_PROTO_ESP, // TODO(mp) s/Proto/XfrmProto
+		Proto: netlink.XFRM_PROTO_ESP,
 		Mode:  netlink.XFRM_MODE_TRANSPORT,
-		Spi:   int(spi), // TODO(mp) s/int/uint32
+		Spi:   int(spi),
 		Aead: &netlink.XfrmStateAlgo{
 			Name:   "rfc4106(gcm(aes))",
 			Key:    key,
@@ -349,20 +346,14 @@ func xfrmPolicy(srcIP, dstIP net.IP, dstPort int, spi SPI) *netlink.XfrmPolicy {
 	}
 }
 
-// helpers
+// Helpers
 
-// | 0.. SRC_PEER | 0.. DST_PEER |
 func newSPI(srcPeer, dstPeer mesh.PeerShortID) (SPI, error) {
-	var spi SPI
-
 	if mesh.PeerShortIDBits > 16 { // should not happen
 		return 0, fmt.Errorf("PeerShortID too long")
 	}
 
-	// TODO(mp) Fill the free space (8 bits) with RND
-	spi = SPI(uint32(srcPeer)<<16 | uint32(dstPeer))
-
-	return spi, nil
+	return SPI(uint32(srcPeer)<<16 | uint32(dstPeer)), nil
 }
 
 func reverseSPI(spi SPI) SPI {
