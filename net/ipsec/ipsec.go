@@ -1,15 +1,7 @@
 package ipsec
 
 // TODO
-// * request id.
-// * Move lock to ipsec.
-// * try to define direction.
-//Async event  (0x20)  timer expired
-//        src 192.168.48.12 dst 192.168.48.11  reqid 0x0 protocol esp  SPI 0x1fe052c
-//		Async event  (0x20)  timer expired
-
-//
-// * Test NAT-T in tunnel mode: http://techblog.newsnow.co.uk/2011/11/simple-udp-esp-encapsulation-nat-t-for.html
+// * Test NAT-T in tunnel mode.
 // * Design documentation.
 // * Blogpost.
 // * Document MTU requirements.
@@ -53,7 +45,6 @@ const (
 // IPSec
 
 type IPSec struct {
-	sync.RWMutex
 	ipt *iptables.IPTables
 	rc  *connRefCount
 }
@@ -75,9 +66,6 @@ func New() (*IPSec, error) {
 // A Reset flushes relevant XFRM polices / SAs and resets relevant iptables
 // rules.
 func (ipsec *IPSec) Reset(teardown bool) error {
-	ipsec.Lock()
-	defer ipsec.Unlock()
-
 	spis := make(map[SPI]struct{})
 
 	policies, err := netlink.XfrmPolicyList(syscall.AF_INET)
@@ -117,9 +105,6 @@ func (ipsec *IPSec) Reset(teardown bool) error {
 
 // A Setup sets up IPSec for a tunnel between srcIP and dstIP.
 func (ipsec *IPSec) Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP, dstPort int, localKey, remoteKey []byte) (SPI, error) {
-	ipsec.Lock()
-	defer ipsec.Unlock()
-
 	outSPI, err := newSPI(srcPeer, dstPeer)
 	if err != nil {
 		return 0,
@@ -155,29 +140,21 @@ func (ipsec *IPSec) Setup(srcPeer, dstPeer mesh.PeerShortID, srcIP, dstIP net.IP
 		return 0, errors.Wrap(err, "new xfrm state (out)")
 	}
 
-	outPolicy := xfrmPolicy(srcIP, dstIP, dstPort, outSPI, netlink.XFRM_DIR_OUT)
+	outPolicy := xfrmPolicy(srcIP, dstIP, dstPort, outSPI)
 	if err := netlink.XfrmPolicyAdd(outPolicy); err != nil {
 		return 0,
 			errors.Wrap(err, fmt.Sprintf("xfrm policy add (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
 	}
-	inPolicy := xfrmPolicy(dstIP, srcIP, dstPort, inSPI, netlink.XFRM_DIR_IN)
-	if err := netlink.XfrmPolicyAdd(inPolicy); err != nil {
-		return 0,
-			errors.Wrap(err, fmt.Sprintf("xfrm policy add (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
-	}
 
-	//if err := ipsec.installMarkRule(srcIP, dstIP, dstPort); err != nil {
-	//	return 0,
-	//		errors.Wrap(err, fmt.Sprintf("install mark rule (%s, %s, 0x%x)", srcIP, dstIP, dstPort))
-	//}
+	if err := ipsec.installMarkRule(srcIP, dstIP, dstPort); err != nil {
+		return 0,
+			errors.Wrap(err, fmt.Sprintf("install mark rule (%s, %s, 0x%x)", srcIP, dstIP, dstPort))
+	}
 
 	return outSPI, nil
 }
 
 func (ipsec *IPSec) Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error {
-	ipsec.Lock()
-	defer ipsec.Unlock()
-
 	var err error
 
 	count := ipsec.rc.put(srcIP, dstIP, outSPI)
@@ -188,14 +165,7 @@ func (ipsec *IPSec) Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error
 		return fmt.Errorf("IPSec invalid state")
 	}
 
-	inSPI := reverseSPI(outSPI)
-
-	if err = netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, dstPort, outSPI, netlink.XFRM_DIR_OUT)); err != nil {
-		return errors.Wrap(err,
-			fmt.Sprintf("xfrm policy del (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
-	}
-
-	if err = netlink.XfrmPolicyDel(xfrmPolicy(dstIP, srcIP, dstPort, inSPI, netlink.XFRM_DIR_IN)); err != nil {
+	if err = netlink.XfrmPolicyDel(xfrmPolicy(srcIP, dstIP, dstPort, outSPI)); err != nil {
 		return errors.Wrap(err,
 			fmt.Sprintf("xfrm policy del (%s, %s, 0x%x)", srcIP, dstIP, outSPI))
 	}
@@ -221,10 +191,10 @@ func (ipsec *IPSec) Teardown(srcIP, dstIP net.IP, dstPort int, outSPI SPI) error
 			fmt.Sprintf("xfrm state del (out, %s, %s, 0x%x)", outSA.Src, outSA.Dst, outSA.Spi))
 	}
 
-	//if err = ipsec.removeMarkRule(srcIP, dstIP, dstPort); err != nil {
-	//	return errors.Wrap(err,
-	//		fmt.Sprintf("remove mark rule (%s, %s, %d)", srcIP, dstIP, dstPort))
-	//}
+	if err = ipsec.removeMarkRule(srcIP, dstIP, dstPort); err != nil {
+		return errors.Wrap(err,
+			fmt.Sprintf("remove mark rule (%s, %s, %d)", srcIP, dstIP, dstPort))
+	}
 
 	return nil
 }
@@ -340,11 +310,9 @@ func xfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, er
 	return &netlink.XfrmState{
 		Src:   srcIP,
 		Dst:   dstIP,
-		Reqid: 666,
 		Proto: netlink.XFRM_PROTO_ESP,
-		//Mode:  netlink.XFRM_MODE_TRANSPORT,
-		Mode: netlink.XFRM_MODE_TUNNEL,
-		Spi:  int(spi),
+		Mode:  netlink.XFRM_MODE_TRANSPORT,
+		Spi:   int(spi),
 		Aead: &netlink.XfrmStateAlgo{
 			Name:   "rfc4106(gcm(aes))",
 			Key:    key,
@@ -353,7 +321,7 @@ func xfrmState(srcIP, dstIP net.IP, spi SPI, key []byte) (*netlink.XfrmState, er
 	}, nil
 }
 
-func xfrmPolicy(srcIP, dstIP net.IP, dstPort int, spi SPI, dir netlink.Dir) *netlink.XfrmPolicy {
+func xfrmPolicy(srcIP, dstIP net.IP, dstPort int, spi SPI) *netlink.XfrmPolicy {
 	ipMask := []byte{0xff, 0xff, 0xff, 0xff} // /32
 
 	return &netlink.XfrmPolicy{
@@ -361,20 +329,17 @@ func xfrmPolicy(srcIP, dstIP net.IP, dstPort int, spi SPI, dir netlink.Dir) *net
 		Dst:     &net.IPNet{IP: dstIP, Mask: ipMask},
 		DstPort: dstPort,
 		Proto:   syscall.IPPROTO_UDP,
-		//Dir:     netlink.XFRM_DIR_OUT,
-		Dir: dir,
-		//Mark: &netlink.XfrmMark{
-		//	Value: skbMark,
-		//	Mask:  skbMark,
-		//},
+		Dir:     netlink.XFRM_DIR_OUT,
+		Mark: &netlink.XfrmMark{
+			Value: skbMark,
+			Mask:  skbMark,
+		},
 		Tmpls: []netlink.XfrmPolicyTmpl{
 			{
 				Src:   srcIP,
 				Dst:   dstIP,
 				Proto: netlink.XFRM_PROTO_ESP,
-				//Mode:  netlink.XFRM_MODE_TRANSPORT,
-				Mode:  netlink.XFRM_MODE_TUNNEL,
-				Reqid: 666,
+				Mode:  netlink.XFRM_MODE_TRANSPORT,
 				Spi:   int(spi),
 			},
 		},
