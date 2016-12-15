@@ -410,6 +410,8 @@ func createOverlay(datapathName string, ifaceName string, isAWSVPC bool, host st
 	var bridge weave.Bridge
 	var ignoreSleeve bool
 
+	ignoreSleeve = true
+
 	switch {
 	case isAWSVPC:
 		vpc := weave.NewAWSVPC()
