@@ -1,4 +1,6 @@
-FROM alpine
+FROM aarch64/alpine:edge
+#FROM alpine
+
 RUN apk add --update \
     iptables \
     ipset \

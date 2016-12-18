@@ -144,6 +144,10 @@ exec_options() {
 }
 
 exec_remote() {
+    #echo "OnCall_exec_remote()"
+    #echo $WEAVEEXEC_DOCKER_ARGS $EXEC_IMAGE --local "$@"
+    #echo $(ls -l /usr/local/bin)
+
     docker $DOCKER_CLIENT_ARGS run --rm \
         $(docker_run_options) \
         --pid=host \
@@ -170,7 +174,8 @@ exec_remote() {
         -e COVERAGE \
         -e CHECKPOINT_DISABLE \
         -e AWSVPC   \
-        $WEAVEEXEC_DOCKER_ARGS $EXEC_IMAGE --local "$@"
+ 	$WEAVEEXEC_DOCKER_ARGS $EXEC_IMAGE --local "$@"      
+#$WEAVEEXEC_DOCKER_ARGS $EXEC_IMAGE --local "$@"
 }
 
 # Given $1 and $2 as semantic version numbers like 3.1.2, return [ $1 < $2 ]
@@ -319,11 +324,15 @@ elif [ "$1" = "run" -a -z "$IS_LOCAL" ] ; then
     exit 0
 fi
 
+echo "IS_LOCAL:"$IS_LOCAL, $@
+
 if [ -z "$IS_LOCAL" ] ; then
+    echo "exec_remote: "$@
     exec_remote "$@"
     exit $?
 fi
 
+echo "Begin settings."
 ######################################################################
 # main (remote and --local) - settings
 ######################################################################
@@ -484,6 +493,7 @@ random_mac() {
 ######################################################################
 
 check_docker_server_api_version() {
+    echo "check_docker_server_api_version."
     # Cope with various versions of `docker version` output format
     if ! DOCKER_API_VERSION=$(docker version -f '{{.Server.APIVersion}}' 2> /dev/null ) ; then
         if ! DOCKER_API_VERSION=$(docker version -f '{{.Server.ApiVersion}}' 2> /dev/null ) ; then
@@ -657,6 +667,7 @@ EOF
     # the sake of 'weave expose'
     configure_arp_cache $BRIDGE
 }
+
 
 create_bridge() {
     if ! try_create_bridge "$@" ; then
@@ -876,6 +887,7 @@ router_opts_bridged_fastdp() {
 }
 
 ask_version() {
+    echo "ask_version."
     if check_running $1 2>/dev/null ; then
         DOCKERIMAGE=$(docker inspect --format='{{.Image}}' $1 )
     elif ! DOCKERIMAGE=$(docker inspect --format='{{.Id}}' $2 2>/dev/null) ; then
@@ -1183,6 +1195,7 @@ EOF
 
     echo "# created by Weave - END"
 }
+
 
 rewrite_etc_hosts() {
     HOSTS_PATH_AND_FQDN=$(docker inspect -f '{{.HostsPath}} {{.Config.Hostname}}.{{.Config.Domainname}}' $CONTAINER) || return 1
@@ -1906,6 +1919,7 @@ deprecation_warnings() {
 # main (remote and --local)
 ######################################################################
 
+
 [ $(id -u) = 0 ] || {
     echo "weave must be run as 'root' when run locally" >&2
     exit 1
@@ -1949,6 +1963,8 @@ shift 1
 
 handle_help_arg "$1"
 
+
+
 case "$COMMAND" in
     setup)
         for img in $IMAGE $EXEC_IMAGE $PLUGIN_IMAGE $WEAVEDB_IMAGE ; do
@@ -1961,6 +1977,7 @@ case "$COMMAND" in
         ;;
     version)
         [ $# -eq 0 ] || usage
+        echo "COMMAND version."
         ask_version $CONTAINER_NAME $IMAGE || true
         ask_version $PROXY_CONTAINER_NAME $EXEC_IMAGE --entrypoint=/home/weave/weaveproxy || true
         ask_version $PLUGIN_CONTAINER_NAME $PLUGIN_IMAGE || true

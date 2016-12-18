@@ -7,7 +7,8 @@ PUBLISH=publish_weave publish_weaveexec publish_plugin publish_weave-kube publis
 SUDO=$(shell docker info >/dev/null 2>&1 || echo "sudo -E")
 BUILD_IN_CONTAINER=true
 RM=--rm
-RUN_FLAGS=-ti
+#RUN_FLAGS=-ti
+RUN_FLAGS=
 COVERAGE=
 
 DOCKERHUB_USER=weaveworks
@@ -36,7 +37,8 @@ WEAVEKUBE_UPTODATE=.weavekube.uptodate
 WEAVENPC_UPTODATE=.weavenpc.uptodate
 WEAVEDB_UPTODATE=.weavedb.uptodate
 
-IMAGES_UPTODATE=$(WEAVER_UPTODATE) $(WEAVEEXEC_UPTODATE) $(PLUGIN_UPTODATE) $(WEAVEKUBE_UPTODATE) $(WEAVENPC_UPTODATE) $(WEAVEDB_UPTODATE)
+#IMAGES_UPTODATE=$(WEAVER_UPTODATE) $(WEAVEEXEC_UPTODATE) $(PLUGIN_UPTODATE) $(WEAVEKUBE_UPTODATE) $(WEAVENPC_UPTODATE) $(WEAVEDB_UPTODATE)
+IMAGES_UPTODATE=$(WEAVER_UPTODATE) $(WEAVEEXEC_UPTODATE) $(PLUGIN_UPTODATE) $(WEAVEDB_UPTODATE)
 
 WEAVER_IMAGE=$(DOCKERHUB_USER)/weave
 WEAVEEXEC_IMAGE=$(DOCKERHUB_USER)/weaveexec
@@ -46,11 +48,13 @@ WEAVENPC_IMAGE=$(DOCKERHUB_USER)/weave-npc
 BUILD_IMAGE=$(DOCKERHUB_USER)/weavebuild
 WEAVEDB_IMAGE=$(DOCKERHUB_USER)/weavedb
 
-IMAGES=$(WEAVER_IMAGE) $(WEAVEEXEC_IMAGE) $(PLUGIN_IMAGE) $(WEAVEKUBE_IMAGE) $(WEAVENPC_IMAGE) $(WEAVEDB_IMAGE)
+#IMAGES=$(WEAVER_IMAGE) $(WEAVEEXEC_IMAGE) $(PLUGIN_IMAGE) $(WEAVEKUBE_IMAGE) $(WEAVENPC_IMAGE) $(WEAVEDB_IMAGE)
+IMAGES=$(WEAVER_IMAGE) $(WEAVEEXEC_IMAGE) $(PLUGIN_IMAGE) $(WEAVEDB_IMAGE)
 
 WEAVE_EXPORT=weave.tar.gz
 
-WEAVEEXEC_DOCKER_VERSION=1.6.2
+#boost docker
+WEAVEEXEC_DOCKER_VERSION=1.11.0
 DOCKER_DISTRIB=prog/weaveexec/docker-$(WEAVEEXEC_DOCKER_VERSION).tgz
 DOCKER_DISTRIB_URL=https://get.docker.com/builds/Linux/x86_64/docker-$(WEAVEEXEC_DOCKER_VERSION).tgz
 NETGO_CHECK=@strings $@ | grep cgo_stub\\\.go >/dev/null || { \
@@ -151,7 +155,10 @@ $(WEAVEEXEC_UPTODATE): prog/weaveexec/Dockerfile prog/weaveexec/symlink $(DOCKER
 	cp $(WEAVEWAIT_NOOP_EXE) prog/weaveexec/weavewait_noop
 	cp $(WEAVEWAIT_NOMCAST_EXE) prog/weaveexec/weavewait_nomcast
 	cp $(WEAVEUTIL_EXE) prog/weaveexec/weaveutil
+
+	#echo "DONT cp prog/weaveexec/docker.tgz."
 	cp $(DOCKER_DISTRIB) prog/weaveexec/docker.tgz
+	
 	$(SUDO) DOCKER_HOST=$(DOCKER_HOST) docker build -t $(WEAVEEXEC_IMAGE) prog/weaveexec
 	touch $@
 
@@ -174,9 +181,11 @@ $(WEAVEDB_UPTODATE): prog/weavedb/Dockerfile
 
 $(WEAVE_EXPORT): $(IMAGES_UPTODATE)
 	$(SUDO) DOCKER_HOST=$(DOCKER_HOST) docker save $(addsuffix :latest,$(IMAGES)) | gzip > $@
+	echo "WEAVE_EXPORT:" $(DOCKER_HOST), $@
 
 $(DOCKER_DISTRIB):
-	curl -o $(DOCKER_DISTRIB) $(DOCKER_DISTRIB_URL)
+	echo "Get DOCKER_DISTRIB:" $(DOCKER_DISTRIB_URL)
+	#curl -o $(DOCKER_DISTRIB) $(DOCKER_DISTRIB_URL)
 
 tools/.git:
 	git submodule update --init

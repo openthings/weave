@@ -1,0 +1,60 @@
+Source: conntrack-tools
+Section: net
+Priority: extra
+Maintainer: Alexander Wirt <formorer@debian.org>
+Uploaders: Arturo Borrero Gonzalez <arturo.borrero.glez@gmail.com>
+Homepage: http://conntrack-tools.netfilter.org/
+Build-Depends: autotools-dev,
+               bison,
+               debhelper (>= 9),
+               dh-systemd,
+               flex,
+               libmnl-dev (>= 1.0.1),
+               libnetfilter-conntrack-dev (>= 1.0.1),
+               libnetfilter-cthelper0-dev,
+               libnetfilter-cttimeout-dev (>= 1.0.0),
+               libnetfilter-queue-dev (>= 1.0.2),
+               libnfnetlink-dev (>= 1.0.1),
+	       libsystemd-dev (>= 224),
+	       autoconf, automake, libtool
+Standards-Version: 3.9.6
+Vcs-Git: https://github.com/formorer/pkg-conntrack-tools.git
+Vcs-Browser: https://github.com/formorer/pkg-conntrack-tools.git
+XS-Testsuite: autopkgtest
+
+Package: conntrack
+Architecture: linux-any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Program to modify the conntrack tables
+ conntrack is a userspace command line program targeted at system
+ administrators. It enables them to view and manage the in-kernel
+ connection tracking state table.
+
+Package: conntrackd
+Architecture: linux-any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Connection tracking daemon
+ Conntrackd can replicate the status of the connections that are
+ currently being processed by your stateful firewall based on Linux.
+ Conntrackd can also run as statistics daemon.
+
+Package: nfct
+Architecture: linux-any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Description: Tool to interact with the connection tracking system
+ nfct is the command line tool that allows you to manipulate the Netfilter's
+ Connection Tracking System.
+ .
+ By now, the supported subsystem is timeout.
+
+Package: conntrack-tools-dbg
+Architecture: linux-any
+Section: debug
+Depends: conntrack (= ${binary:Version}) | conntrackd (= ${binary:Version}) | nfct (= ${binary:Version}),
+         ${misc:Depends},
+         ${shlibs:Depends}
+Description: debugging symbols for conntrack-tools
+ The conntrack-tools software set is currently composed of 'conntrack',
+ 'conntrackd' and 'nfct'.
+ .
+ This package contains the debugging symbols for all of them.

@@ -1,0 +1,216 @@
+conntrack-tools (1:1.4.3-3) unstable; urgency=medium
+
+  * [8689754] d/control: fix typo in conntrack-tools-dbg long description
+  * [b403285] conntrackd: add libsystemd integration
+
+ -- Arturo Borrero Gonzalez <arturo.borrero.glez@gmail.com>  Thu, 05 Nov 2015 13:00:09 +0100
+
+conntrack-tools (1:1.4.3-2) unstable; urgency=medium
+
+  * [ef76f4f] conntrack-tools: rename source package
+  * [959d85b] conntrack-tools: add -dbg binary package
+
+ -- Arturo Borrero Gonzalez <arturo.borrero.glez@gmail.com>  Wed, 14 Oct 2015 11:48:40 +0200
+
+conntrack (1:1.4.3-1) unstable; urgency=medium
+
+  * [db73d0e] Imported Upstream version 1.4.3
+  * [0ccc8d0] d/patches: drop CVE-2015-6496.patch
+  * [bf49028] d/control: lower priority from optional to extra
+
+ -- Arturo Borrero Gonzalez <arturo.borrero.glez@gmail.com>  Tue, 15 Sep 2015 13:13:43 +0200
+
+conntrack (1:1.4.2-4) unstable; urgency=medium
+
+  * [fcc616e] conntrackd.service: add ProtectSystem= and ProtectHome=
+  * [5a4a432] d/: add basic DEP8 test suite
+
+ -- Arturo Borrero Gonzalez <arturo.borrero.glez@gmail.com>  Tue, 08 Sep 2015 10:44:32 +0200
+
+conntrack (1:1.4.2-3) unstable; urgency=medium
+
+  * [d2fe984] d/patches: add CVE-2015-6496.patch (Closes: #796103)
+
+ -- Arturo Borrero Gonzalez <arturo.borrero.glez@gmail.com>  Wed, 19 Aug 2015 20:08:53 +0200
+
+conntrack (1:1.4.2-2) unstable; urgency=medium
+
+  [ Arturo Borrero Gonzalez ]
+  * [9e57eb1] d/control: add Vcs fields
+  * [d2f808f] d/control: architecture is linux-any
+
+  [ Alexander Wirt ]
+  * [70fd658] Update config.{guess,sub} with autotools-dev (Closes: #763692)
+
+ -- Alexander Wirt <formorer@debian.org>  Thu, 02 Oct 2014 07:51:09 +0200
+
+conntrack (1:1.4.2-1) unstable; urgency=medium
+
+  [ Arturo Borrero Gonzalez ]
+  * [063c2ed] d/control: add Arturo Borrero Gonzalez as uploader
+  * [2f1d20b] d/rules: delete useless comment
+  * [afca2aa] d/rules: do a verbose build
+  * [932ae12] d/control: add autotools-dev as build-dep
+  * [8c11b54] d/control: bump standars to 3.9.6
+  * [f93ca69] d/copyright: add a proper copyright file
+  * [66d8631] d/copyright: fix overriding of file matching
+  * [bb3229e] d/: new binary package for nfct
+
+  [ Alexander Wirt ]
+  * [b5b4069] Add systemd support
+  * [8beec8e] wrap-and-sort
+  * [9f760e5] Imported Upstream version 1.4.2
+
+ -- Alexander Wirt <formorer@debian.org>  Fri, 26 Sep 2014 15:58:30 +0200
+
+conntrack (1:1.4.1-1) unstable; urgency=low
+
+  * [095df09] Move to 3.0 (quilt) for bz2 support
+  * [6b61aef] Imported Upstream version 1.4.1
+
+ -- Alexander Wirt <formorer@debian.org>  Sat, 18 May 2013 21:48:27 +0200
+
+conntrack (1:1.2.1-1) unstable; urgency=low
+
+  * [ed902b3] Initial upstream branch.
+  * [ea27bb4] Imported Upstream version 1.2.1
+  * [9a5f9ae] Update libnetfilter_conntrack requirement
+  * [92005c6] Fix dependency
+  * [fb4a63b] wrap-and-sort debian/control
+  * [21100c2] Remove obsolete stuff
+  * [30f468d] Convert to dh9
+  * [b96ec88] Bump standards version
+  * [741f6a6] wrap-and-sort
+  * [9c43cb9] Install examples
+  * [f403c41] Installation of examples moved to dh_installexamples
+  * [d60e302] Remove wrong example
+
+ -- Alexander Wirt <formorer@debian.org>  Tue, 12 Jun 2012 18:09:58 +0200
+
+conntrack (1:1.0.0-2) unstable; urgency=low
+
+  * Build depend on libnetfilter-conntrack >= 0.9.1 
+    (Closes: #616410)
+
+ -- Alexander Wirt <formorer@debian.org>  Fri, 04 Mar 2011 10:07:00 +0100
+
+conntrack (1:1.0.0-1) unstable; urgency=low
+
+  * New upstream version (Closes: #589202, #589203, #589204) 
+    - Fix removing of conntrack entries (Closes: #496769)
+  * Bump standards version
+  * Force deb source 1.0
+  * Use invoke-rc.d in logrotate.de (Closes: #613512)
+  * Make logrotate silent (Closes: #605247)
+
+ -- Alexander Wirt <formorer@debian.org>  Thu, 03 Mar 2011 23:07:26 +0100
+
+conntrack (1:0.9.14-2) unstable; urgency=low
+
+  * Integrate lost NMU from Stefan Fritsch. Thanks Stefan
+  * Prevent dpkg conffile prompt for unmodified conntrackd.conf when upgrading
+    from pre 1:0.9.12-1 (closes: #542662).
+
+ -- Alexander Wirt <formorer@debian.org>  Sat, 13 Feb 2010 11:17:59 +0100
+
+conntrack (1:0.9.14-1) unstable; urgency=low
+
+  * New upstream version 
+  * Add ${misc:Depends} to all binary packages
+  * Add dpatch support
+  * Bump standards version (no changes)
+  * Remove Max from Uploaders. Thanks for your work!
+  * Backport patch from HEAD to fix UDP filtering. 
+    Thanks tino for the hint
+
+ -- Alexander Wirt <formorer@debian.org>  Sat, 30 Jan 2010 18:34:09 +0100
+
+conntrack (1:0.9.13-1) unstable; urgency=low
+
+  [ Max Kellermann ]
+  * new upstream release (Closes: #537896, #545918)
+    - require libnfnetlink 1.0.0, libnetfilter_conntrack 0.0.100
+    - ChangeLog was removed by upstream
+  * updated home page in the copyright file (Closes: #533583)
+  * correct LSB dependencies in init script, patch by Petter Reinholdtsen
+    (Closes: #541079)
+
+  [ Alexander Wirt ]
+  * Bump standards version 
+
+ -- Alexander Wirt <formorer@debian.org>  Thu, 17 Sep 2009 12:32:19 +0200
+
+conntrack (1:0.9.12-1) unstable; urgency=low
+
+  [ Max Kellermann ]
+  * new upstream release
+    - build-depend on libnfnetlink 0.0.40, libnetfilter-conntrack 0.0.99
+    - fixes FTBS (undeclared variable) 
+    (Closes: #522181, #518891)
+  * moved conntrackd.conf to /etc/conntrackd/conntrackd.conf (Closes: #477679)
+  * updated sample configuration file
+  * updated home page to http://conntrack-tools.netfilter.org/
+  * restart conntrackd after logrotate (Closes: #513079)
+
+  [ Alexander Wirt ]
+  * Bump standards version 
+
+ -- Alexander Wirt <formorer@debian.org>  Thu, 02 Apr 2009 11:37:25 +0200
+
+conntrack (1:0.9.7-1) unstable; urgency=low
+
+  [ Max Kellermann ]
+  * new upstream release
+    - dropped all patches because they have been merged by upstream
+    - depend on libnfnetlink 0.0.33, libnetfilter-conntrack 0.0.94
+
+  [ Alexander Wirt ]
+  * Bump standards version (No changes) 
+
+ -- Alexander Wirt <formorer@debian.org>  Tue, 22 Jul 2008 23:33:30 +0200
+
+conntrack (1:0.9.6-4) unstable; urgency=low
+
+  [ Max Kellermann ]
+  * fix compilation on SPARC (printf argument mismatch)
+
+ -- Alexander Wirt <formorer@debian.org>  Mon, 14 Apr 2008 23:09:22 +0200
+
+conntrack (1:0.9.6-3) unstable; urgency=low
+
+  [ Max Kellermann ]
+  * fix gcc 4.3 compilation errors:
+    - "large integer implicitly truncated to unsigned type" (Closes: #472812)
+    - "'input' defined but not used" (Closes: #474768)
+
+ -- Alexander Wirt <formorer@debian.org>  Tue, 08 Apr 2008 22:08:10 +0200
+
+conntrack (1:0.9.6-2) unstable; urgency=low
+
+  * Build depend on bison (Closes: #472442) 
+
+ -- Alexander Wirt <formorer@debian.org>  Mon, 24 Mar 2008 12:35:44 +0100
+
+conntrack (1:0.9.6-1) unstable; urgency=low
+
+  [ Max Kellermann ]
+  * new upstream release
+  * added package "conntrackd"
+  * updated watchfile for new upstream name "conntrack-tools" (Closes:
+    #449899)
+  * removed "-Wall" from CFLAGS override
+  * moved DH_COMPAT to debian/compat
+  * don't ignore "make distclean" errors
+  * bumped Standards-Version to 3.7.3
+  * install upstream changelog
+  * added Homepage header to debian/control
+  * call dh_install with -X.svn because upstream accidently distributed
+    the .svn directories
+
+ -- Alexander Wirt <formorer@debian.org>  Fri, 21 Mar 2008 22:46:22 +0100
+
+conntrack (1.00~beta2-1) unstable; urgency=low
+
+  * initial debian release (Closes: #388615)
+
+ -- Max Kellermann <max@duempel.org>  Thu, 21 Sep 2006 18:04:51 +0200
